@@ -121,6 +121,10 @@ const Y = Array.from({length:8},(_,c)=>X.reduce((s,x,r)=>s + x*W[r][c],0));
 // row shards: GPU i owns rows 2i, 2i+1 and X-slice [2i,2i+1] → produces a PARTIAL 1x8
 const rowPartial = Array.from({length:4},(_,g)=>
   Array.from({length:8},(_,c)=> X[2*g]*W[2*g][c] + X[2*g+1]*W[2*g+1][c]));
+// full prefill input: one embedding row per prompt token ("The", "cat", "sat")
+const E = [X, [2,0,1,1,0,2,1,1], [0,1,2,0,1,1,2,0]];
+// full prefill output: (3x8)·(8x8) = 3x8 — three independent row·W products
+const YM = E.map(x => Array.from({length:8},(_,c)=>x.reduce((s,v,r)=>s + v*W[r][c],0)));
 
 let runId = 0;                      // cancels in-flight animations on step change
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
@@ -399,12 +403,12 @@ const P2 = [];
 P2.push({
   title:'Prefill input: "The cat sat" → token IDs → embedding vectors',
   text:`<h2>From text to numbers</h2>
-    <p>The tokenizer maps each piece of text to an ID; the embedding table turns each ID into a vector (really 1×4096 — here <b>1×8</b>).</p>
-    <p><b>Prefill</b> = pushing ALL prompt tokens through all 94 layers at once, as one matrix (here 3×8). It's one big burst of matrix math — highly parallel, compute-bound. That's why TTFT is exactly where extra GPUs pay off.</p>
-    <p>To keep the arithmetic checkable, we follow <b>one row</b> of that matrix — the vector <b>X</b> for "The". Everything shown applies to all rows at once.</p>`,
+    <p>The tokenizer maps each piece of text to an ID; the embedding table turns each ID into a vector. <b>Why 4096?</b> That's the model's <i>hidden size</i> — the fixed internal width of Qwen3-235B-A22B. Every token, whichever it is, becomes exactly 4096 numbers; the embedding table is literally a ~151k (vocab) × 4096 matrix and the ID picks a row. Here we shrink 4096 → <b>8</b> so it fits on screen.</p>
+    <p><b>All three embeddings enter layer 1 together</b>, stacked into one 3×8 matrix — that stack IS the prefill input. Nothing waits its turn.</p>
+    <p>The bright row ("The") is the one whose arithmetic we verify by hand in the next steps — but the next step shows all three rows computing at once.</p>`,
   setup(body){
     const row = el('div','row');
-    const toks = [['The','X = our running example', X],['▁cat','', [2,0,1,1,0,2,1,1]],['▁sat','', [0,1,2,0,1,1,2,0]]];
+    const toks = [['The','X = the row we track', E[0]],['▁cat','', E[1]],['▁sat','', E[2]]];
     const col = el('div','col');
     toks.forEach(([t, note, v], i)=>{
       const r = el('div','row'); r.style.alignItems='center';
@@ -421,23 +425,41 @@ P2.push({
       col.appendChild(r);
     });
     row.appendChild(col);
+    // stack the three vectors into the actual layer-1 input
+    row.appendChild(el('div','arrow','⟶ stack ⟶'));
+    const stackCol = el('div','col');
+    const stacked = mtx(E, {small:true});
+    stacked.querySelectorAll('.cell').forEach(c=>{
+      if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; }
+      else { c.style.opacity='.55'; }
+    });
+    stacked.classList.add('fadeIn'); stacked.style.animationDelay='.8s';
+    stackCol.appendChild(stacked);
+    stackCol.appendChild(el('div','caption','X (3×8) — the ACTUAL input to layer 1:<br>all tokens, one matrix'));
+    row.appendChild(stackCol);
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','Prefill processes the whole 3×8 block in one go — no token-by-token loop. (The loop is <b>decode</b>, a different story with different bottlenecks.) We now follow <b>X = [1 2 0 1 2 1 1 0]</b> into layer 1.'));
+    body.appendChild(el('div','bigNote','Prefill processes this whole 3×8 block in one go — no token-by-token loop. (The loop is <b>decode</b>, a different story with different bottlenecks.) Next: the full block hits W on one GPU, and you\'ll see the three rows never interact inside a matmul.'));
   }
 });
 </script>
 <script>
 /* ---- 2.2 single-GPU baseline ---- */
 P2.push({
-  title:'Baseline: ONE GPU computes X · W — all 64 multiply-adds, alone',
-  text:`<h2>The full-size matmul</h2>
-    <p>Output <b>Y</b> has 8 entries. Each entry = dot product of X with one <b>column</b> of W: 8 multiply-adds. 8 columns × 8 = <b>64 multiply-adds</b>, all on one GPU, one after another (conceptually).</p>
-    <p>Watch the counter and the time bar. Remember the final <b>Y</b> — Part 2 will reproduce it twice from shards, and it must match exactly.</p>
-    <p>Real scale: this "matrix" is 4096×4096 → <b>~16.7 million</b> multiply-adds per token per matrix, ~6 matrices per layer, 94 layers, × your prompt length. That mountain of math is what you wait for before the first token.</p>`,
+  title:'Baseline: ONE GPU computes the whole 3×8 block · W — 192 multiply-adds, alone',
+  text:`<h2>The full-size matmul — all tokens at once</h2>
+    <p>The input is the full 3×8 block. Key fact: <code>(3×8)·(8×8)</code> is nothing more than <b>three independent</b> <code>(1×8)·(8×8)</code> products sharing the same W — the "cat" row never touches the "The" row's arithmetic. Watch: for every column of W, <b>all three output cells fill simultaneously</b>.</p>
+    <p>Per token row: 8 columns × 8 = 64 multiply-adds. Three rows → <b>192 total</b>, all owned by one GPU. Longer prompt = more rows = more work, but zero extra <i>sequential</i> depth — that independence is exactly what GPUs (and step 3) exploit.</p>
+    <p>Remember the bright row's result <b>Y</b> — the sharded versions must reproduce it exactly.</p>
+    <p>Real scale: 4096×4096 → <b>~16.7 million</b> multiply-adds per matrix per token, ~6 matrices per layer, 94 layers, × every prompt token. That mountain is what you wait for before the first token.</p>`,
   setup(body, id){
     const row = el('div','row');
     const colL = el('div','col');
-    colL.appendChild(vecEl(X, null)); colL.appendChild(el('div','caption','X (1×8)'));
+    const xm = mtx(E, {small:true});
+    xm.querySelectorAll('.cell').forEach(c=>{
+      if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; }
+      else { c.style.opacity='.55'; }
+    });
+    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8) — all tokens<br>bright row = "The" (tracked)'));
     row.appendChild(colL);
     row.appendChild(el('div','eq','·'));
     const colW = el('div','col');
@@ -445,14 +467,15 @@ P2.push({
     row.appendChild(colW);
     row.appendChild(el('div','eq','='));
     const colY = el('div','col');
-    const ym = mtx([Y.map(()=> '')], {values:true}); colY.appendChild(ym); colY.appendChild(el('div','caption','Y (1×8)'));
+    const ym = mtx(E.map(()=>Array(8).fill('')), {small:true});
+    colY.appendChild(ym); colY.appendChild(el('div','caption','Y (3×8) — one output<br>row per token'));
     row.appendChild(colY);
     body.appendChild(row);
     const meter = el('div','col'); meter.style.marginTop='22px';
-    const cnt = el('div','counter','multiply-adds: <b>0</b> / 64');
+    const cnt = el('div','counter','multiply-adds: <b>0</b> / 192 (64 per token row)');
     const tw = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='#60a5fa'; tb.appendChild(tf); tw.appendChild(tb);
     meter.appendChild(cnt); meter.appendChild(tw);
-    meter.appendChild(el('div','caption','time on 1 GPU  →  64 units'));
+    meter.appendChild(el('div','caption','time on 1 GPU → the rows are independent of each other, but one GPU still owns ALL of the work'));
     body.appendChild(meter);
     (async()=>{
       await sleep(500);
@@ -460,10 +483,13 @@ P2.push({
         if(!alive(id)) return;
         wm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
         await sleep(360); if(!alive(id)) return;
-        const ycell = ym.querySelectorAll('.cell')[c];
-        ycell.textContent = Y[c]; ycell.classList.add('flash');
-        ycell.style.background='#14304d'; ycell.style.color='#fff';
-        cnt.innerHTML = `multiply-adds: <b>${(c+1)*8}</b> / 64`;
+        for(let t=0;t<3;t++){
+          const ycell = ym.querySelectorAll('.cell')[t*8+c];
+          ycell.textContent = YM[t][c]; ycell.classList.add('flash');
+          if(t===0){ ycell.style.background='#14304d'; ycell.style.color='#fff'; }
+          else { ycell.style.opacity='.55'; }
+        }
+        cnt.innerHTML = `multiply-adds: <b>${(c+1)*24}</b> / 192 (64 per token row)`;
         tf.style.transition='width .35s linear'; tf.style.width = ((c+1)*12.5)+'%';
       }
       wm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
@@ -475,8 +501,8 @@ P2.push({
 P2.push({
   title:'Same job on 4 GPUs: each multiplies X by its 8×2 shard — simultaneously',
   text:`<h2>Why TTFT drops: smaller matmuls, in parallel</h2>
-    <p>X is <b>broadcast</b> to all four GPUs (every GPU sees the full input — cheap, it's tiny compared to weights).</p>
-    <p>Each GPU computes <code>X · (its 8×2 shard)</code> = <b>2 output values, 16 multiply-adds</b>. All four run at the same time.</p>
+    <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Each GPU really computes <code>(3×8) · (8×2 shard)</code> = a 3×2 piece of the output, all rows at once.</p>
+    <p>We animate the tracked row only, to keep the numbers checkable: <code>X · (8×2 shard)</code> = <b>2 output values, 16 multiply-adds</b> per GPU, all four at the same time. The other two rows ride along identically.</p>
     <p>Total work is still 64 multiply-adds — but <b>wall-clock time is 16 units, not 64</b>. That is the whole TTFT story in one picture.</p>
     <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> pieces of Y. Joining them = laying them side by side (an <b>all-gather</b>/concat). Compare the assembled Y with the previous step: identical, bit for bit.</div>`,
   setup(body, id){
