@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Tensor Parallelism — Qwen3-235B-A22B on 4 GPUs</title>
 <style>
   :root{
@@ -12,7 +12,9 @@
     --ok:#4ade80; --warn:#f87171;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
-  body{background:var(--bg); color:var(--text); font-family:"SF Mono","Cascadia Code",Consolas,Menlo,monospace; min-height:100vh; display:flex; flex-direction:column;}
+  html{max-width:100%;}
+  body{background:var(--bg); color:var(--text); font-family:"SF Mono","Cascadia Code",Consolas,Menlo,monospace; min-height:100vh; min-height:100dvh; display:flex; flex-direction:column;}
+  button{-webkit-tap-highlight-color:transparent; touch-action:manipulation;}
   header{padding:14px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:20px; flex-wrap:wrap;}
   header h1{font-size:15px; font-weight:600; letter-spacing:.3px;}
   header h1 span{color:var(--dim); font-weight:400;}
@@ -83,6 +85,54 @@
   .raceFill{height:100%; width:0%; }
   .raceLbl{position:absolute; right:8px; top:4px; font-size:11px; color:#fff;}
   .tokOut{font-size:13px; padding:5px 12px; border-radius:8px; background:var(--ok); color:#052e12; font-weight:700; opacity:0; transition:opacity .4s;}
+  .pipeBar{width:150px; height:10px; border-radius:3px;}
+  .shardBar{width:64px; height:9px; border-radius:2px;}
+  .layerRow{display:flex; gap:8px; align-items:center; width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  .layerCell{width:70px; height:20px; border-radius:4px; flex-shrink:0; transition:all .25s;}
+  .raceLane{width:100%; max-width:820px;}
+
+  /* ---------- mobile / tablet ---------- */
+  @media (max-width: 900px){
+    header{padding:12px 14px; gap:10px; flex-direction:column; align-items:stretch;}
+    header h1{font-size:13.5px; line-height:1.4;}
+    header h1 span{display:block; font-size:11px; margin-top:3px;}
+    .tabs{margin-left:0; width:100%;}
+    .tab{flex:1; text-align:center; padding:10px 8px; min-height:44px; font-size:11.5px;}
+    main{flex-direction:column; overflow:auto; -webkit-overflow-scrolling:touch; min-height:0;}
+    #stage{padding:14px 12px 8px; overflow:visible; flex:none; min-width:0; width:100%;}
+    #stageInner{max-width:100%; overflow-x:auto;}
+    aside{width:100%; min-width:0; border-left:none; border-top:1px solid var(--line); padding:16px 14px 28px; overflow:visible;}
+    footer{display:grid; grid-template-columns:1fr auto 1fr; grid-template-areas:"back label next" "dots dots dots" "replay replay replay"; gap:8px 10px; padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); align-items:center;}
+    #prevBtn{grid-area:back; justify-self:start;}
+    #nextBtn{grid-area:next; justify-self:end;}
+    .stepLabel{grid-area:label; min-width:0; text-align:center;}
+    .dots{grid-area:dots; margin:4px 0 0; width:100%; justify-content:center; gap:10px;}
+    .dot{width:12px; height:12px;}
+    .replay{grid-area:replay; margin:0 auto; min-height:40px;}
+    .navbtn{padding:10px 16px; min-height:44px;}
+    .stageTitle{font-size:14px; line-height:1.35; margin:0 0 14px; text-align:left;}
+    .row{gap:12px;}
+    .cell{width:26px; height:26px; font-size:10px;}
+    .cell.small{width:20px; height:20px; font-size:9px;}
+    .gpuBox{min-width:0; max-width:100%;}
+    .modelCard{padding:14px 16px;}
+    .specGrid{grid-template-columns:1fr; gap:4px 12px;}
+    .specGrid .k{margin-top:8px;}
+    .specGrid .k:first-child{margin-top:0;}
+    .bigNote{padding:12px 14px; font-size:12px; margin:12px 0 0; max-width:100%;}
+    .layerBar{width:min(230px, 100%);}
+    .tbarWrap{max-width:100%;}
+    .pipeBar{width:min(150px, 42vw);}
+    .layerCell{width:max(48px, 18vw);}
+    .chip{padding:8px 10px;}
+  }
+  @media (max-width: 480px){
+    .cell{width:22px; height:22px; font-size:9px;}
+    .cell.small{width:18px; height:18px; font-size:8px;}
+    .gpuBox{padding:10px;}
+    .tab{padding:10px 6px; font-size:11px;}
+    .arrow, .eq{font-size:16px;}
+  }
 </style>
 </head>
 <body>
@@ -238,7 +288,7 @@ P1.push({
       const inner = el('div','col');
       const stack = el('div'); stack.style.display='flex'; stack.style.flexDirection='column'; stack.style.gap='3px';
       for(let l=0;l<6;l++){
-        const bar = el('div'); bar.style.cssText=`width:150px;height:10px;border-radius:3px;background:${GDARK[g]};border:1px solid ${GHEX[g]}33`;
+        const bar = el('div','pipeBar'); bar.style.cssText=`background:${GDARK[g]};border:1px solid ${GHEX[g]}33`;
         stack.appendChild(bar);
       }
       inner.appendChild(stack);
@@ -365,7 +415,7 @@ P1.push({
       const inner = el('div','col');
       const stack = el('div'); stack.style.cssText='display:flex;flex-direction:column;gap:3px;';
       for(let l=0;l<8;l++){
-        const bar=el('div'); bar.style.cssText=`width:64px;height:9px;border-radius:2px;background:${GDARK[g]};border-left:3px solid ${GHEX[g]}`;
+        const bar=el('div','shardBar'); bar.style.cssText=`background:${GDARK[g]};border-left:3px solid ${GHEX[g]}`;
         stack.appendChild(bar);
       }
       inner.appendChild(stack);
@@ -640,11 +690,11 @@ P2.push({
     const rows=[];
     const wrap = el('div'); wrap.style.cssText='display:flex;flex-direction:column;gap:8px;';
     for(let l=0;l<8;l++){
-      const r = el('div'); r.style.cssText='display:flex;gap:8px;align-items:center;';
+      const r = el('div','layerRow');
       r.appendChild(el('div','caption',`L${l+1}`)).style.minWidth='30px';
       const gcells=[];
       for(let g=0;g<4;g++){
-        const c = el('div'); c.style.cssText=`width:70px;height:20px;border-radius:4px;background:${GDARK[g]};border:1px solid ${GHEX[g]}44;transition:all .25s;`;
+        const c = el('div','layerCell'); c.style.cssText+=`background:${GDARK[g]};border:1px solid ${GHEX[g]}44;`;
         r.appendChild(c); gcells.push(c);
       }
       const sync = el('div','tag','AllReduce'); sync.style.transition='all .25s';
@@ -687,7 +737,7 @@ P2.push({
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='26px';
     function lane(label, colorHtml){
-      const c = el('div'); c.style.cssText='width:100%;max-width:820px;';
+      const c = el('div','raceLane');
       c.appendChild(el('div','caption',label)).style.textAlign='left';
       const t = el('div','raceTrack');
       c.appendChild(t);
