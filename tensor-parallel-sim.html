@@ -482,7 +482,7 @@ P2.push({
       if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; }
       else { c.style.opacity='.55'; }
     });
-    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8) — all tokens<br>bright row = "The" (tracked)'));
+    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8) — ALL rows multiply W;<br>bright = "The", just highlighted for tracking'));
     row.appendChild(colL);
     row.appendChild(el('div','eq','·'));
     const colW = el('div','col');
@@ -524,14 +524,15 @@ P2.push({
 P2.push({
   title:'Same job on 4 GPUs: each multiplies X by its 8×2 shard — simultaneously',
   text:`<h2>Why TTFT drops: smaller matmuls, in parallel</h2>
-    <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Each GPU really computes <code>(3×8) · (8×2 shard)</code> = a 3×2 piece of the output, all rows at once.</p>
-    <p>We animate the tracked row only, to keep the numbers checkable: <code>X · (8×2 shard)</code> = <b>2 output values, 16 multiply-adds</b> per GPU, all four at the same time. The other two rows ride along identically.</p>
-    <p>Total work is still 64 multiply-adds — but <b>wall-clock time is 16 units, not 64</b>. That is the whole TTFT story in one picture.</p>
-    <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> pieces of Y. Joining them = laying them side by side (an <b>all-gather</b>/concat). Compare the assembled Y with the previous step: identical, bit for bit.</div>`,
+    <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Each GPU computes <code>(3×8) · (8×2 shard)</code> = a <b>3×2 tile</b> of the output: its two columns, for ALL three tokens at once. Watch every row fill — nothing is dropped.</p>
+    <p>Per GPU: 48 multiply-adds (16 per token row), all four GPUs simultaneously. Total work is still 192 — but <b>wall-clock time is 48 units, not 192</b>. That is the whole TTFT story in one picture.</p>
+    <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> tiles of the output. Joining them = laying the tiles side by side (an <b>all-gather</b>/concat). Compare the assembled 3×8 with step 2: identical, bit for bit.</div>`,
   setup(body, id){
     const bc = el('div','col');
-    bc.appendChild(vecEl(X,null,{small:true}));
-    bc.appendChild(el('div','caption','X broadcast to all 4 GPUs ↓'));
+    const bx = mtx(E,{small:true});
+    bx.querySelectorAll('.cell').forEach(c=>{ if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; } });
+    bc.appendChild(bx);
+    bc.appendChild(el('div','caption','the FULL 3×8 block — every token — is broadcast to all 4 GPUs ↓'));
     body.appendChild(bc);
     const row = el('div','row'); row.style.marginTop='14px';
     const parts=[];
@@ -541,51 +542,56 @@ P2.push({
       const sm = mtx(shard,{colorOf:()=>g, small:true});
       inner.appendChild(sm);
       inner.appendChild(el('div','caption','8×2 shard'));
-      const ym = mtx([['','']],{small:true});
+      const ym = mtx(E.map(()=>['','']),{small:true});
       inner.appendChild(ym);
-      inner.appendChild(el('div','caption',`Y[${2*g}], Y[${2*g+1}]`));
-      const cnt = el('div','counter','<b>0</b>/16 MACs');
+      inner.appendChild(el('div','caption',`3×2 tile: cols ${2*g}–${2*g+1},<br>one row per token`));
+      const cnt = el('div','counter','<b>0</b>/48 MACs');
       inner.appendChild(cnt);
       row.appendChild(gpuBox(g, inner));
       parts.push({sm, ym, cnt, g});
     }
     body.appendChild(row);
     const joinCol = el('div','col'); joinCol.style.marginTop='20px';
-    const joined = mtx([Y.map(()=> '')]);
-    joinCol.appendChild(el('div','caption','join = CONCATENATE the pieces (all-gather) ↓'));
+    const joined = mtx(E.map(()=>Array(8).fill('')),{small:true});
+    joinCol.appendChild(el('div','caption','join = CONCATENATE the tiles side by side (all-gather) ↓'));
     joinCol.appendChild(joined);
     const check = el('div','caption','');
     joinCol.appendChild(check);
     const meter = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--ok)'; tb.appendChild(tf); meter.appendChild(tb);
     joinCol.appendChild(meter);
-    joinCol.appendChild(el('div','caption','time on 4 GPUs → 16 units (bar drawn to the same scale as step 2)'));
+    joinCol.appendChild(el('div','caption','time on 4 GPUs → 48 units (bar drawn to the same 192-unit scale as step 2)'));
     body.appendChild(joinCol);
     (async()=>{
       await sleep(600);
-      for(let c=0;c<2;c++){          // both shard-columns, all GPUs in parallel
+      for(let c=0;c<2;c++){          // both shard-columns, all GPUs in parallel, all token rows at once
         if(!alive(id)) return;
         parts.forEach(p=>{
           p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
         });
         await sleep(600); if(!alive(id)) return;
         parts.forEach(p=>{
-          const yc = p.ym.querySelectorAll('.cell')[c];
-          yc.textContent = Y[2*p.g+c]; yc.classList.add('flash');
-          yc.style.background=GDARK[p.g]; yc.style.color=GHEX[p.g];
-          p.cnt.innerHTML = `<b>${(c+1)*8}</b>/16 MACs`;
+          for(let t=0;t<3;t++){
+            const yc = p.ym.querySelectorAll('.cell')[t*2+c];
+            yc.textContent = YM[t][2*p.g+c]; yc.classList.add('flash');
+            yc.style.background=GDARK[p.g]; yc.style.color=GHEX[p.g];
+            if(t>0) yc.style.opacity='.6';
+          }
+          p.cnt.innerHTML = `<b>${(c+1)*24}</b>/48 MACs`;
         });
-        tf.style.transition='width .5s linear'; tf.style.width = ((c+1)*12.5)+'%'; // same scale: 16/64 = 25% total
+        tf.style.transition='width .5s linear'; tf.style.width = ((c+1)*12.5)+'%'; // same scale: 48/192 = 25% total
       }
       parts.forEach(p=>p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl')));
       await sleep(400); if(!alive(id)) return;
       for(let g=0;g<4;g++){
-        for(let c=0;c<2;c++){
-          const cell = joined.querySelectorAll('.cell')[2*g+c];
-          cell.textContent = Y[2*g+c]; cell.style.background=GDARK[g]; cell.style.color=GHEX[g]; cell.classList.add('flash');
+        for(let t=0;t<3;t++) for(let c=0;c<2;c++){
+          const cell = joined.querySelectorAll('.cell')[t*8+2*g+c];
+          cell.textContent = YM[t][2*g+c]; cell.style.background=GDARK[g]; cell.style.color=GHEX[g];
+          if(t>0) cell.style.opacity='.6';
+          cell.classList.add('flash');
         }
         await sleep(280); if(!alive(id)) return;
       }
-      check.innerHTML = `matches the single-GPU Y exactly <span class="okmark">✓</span> — [${Y.join(' ')}]`;
+      check.innerHTML = `all 3 rows match the single-GPU 3×8 output exactly <span class="okmark">✓</span> — tracked row: [${Y.join(' ')}]`;
     })();
   }
 });
@@ -595,6 +601,7 @@ P2.push({
   title:'The other cut: rows. Now every GPU makes a PARTIAL Y — AllReduce sums them',
   text:`<h2>Where AllReduce actually comes from</h2>
     <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). It only needs the matching 2 entries of X. Each GPU computes <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… but it's only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU saw only 2.</p>
+    <p><i>Display note:</i> this step deliberately shows only the tracked "The" row — with all 3 tokens the partials become four 3×8 blocks and the screen drowns in numbers. In reality all rows are AllReduced together in one shot, exactly like the previous steps.</p>
     <p><b>AllReduce</b> = all GPUs pool their partial vectors, sum element-wise, and <i>everyone</i> ends up holding the identical total. Look: the four weird partial rows add up to exactly the same Y again.</p>
     <div class="key"><b>Why both cuts exist:</b> a layer chains two matmuls (up-projection → down-projection). Make the 1st <b>column-split</b> and the 2nd <b>row-split</b>, and the outputs of the 1st are already exactly the input slices the 2nd needs — <b>zero communication in between</b>. Only ONE AllReduce at the end of the block. That's Megatron-style tensor parallelism.</div>`,
   setup(body, id){
