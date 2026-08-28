@@ -298,27 +298,50 @@ P1.push({
 
 /* ---- 1.4 what is inside a layer ---- */
 P1.push({
-  title:'Zoom in: a "layer" is mostly a handful of weight matrices',
-  text:`<h2>So what exactly gets sliced?</h2>
-    <p>A transformer layer isn't magic — it is a few big <b>weight matrices</b> plus cheap glue (norms, softmax, activation):</p>
-    <p><code>W_Q, W_K, W_V, W_O</code> — attention<br><code>W_up, W_down</code> — the FFN/expert MLP</p>
-    <p>At hidden size 4096, each of these is on the order of <b>4096×4096 numbers</b> (FFN bigger). "Sharding a layer" literally means <b>cutting these grids of numbers into pieces</b>.</p>
-    <p>4096×4096 doesn't fit on a screen — so from here on we use one <b>8×8 matrix as the stand-in</b> for any of these. Same logic, 64 numbers instead of 16 million.</p>`,
+  title:'Zoom in: a layer = a few weight grids the token vector flows through',
+  text:`<h2>How to read a shape like 4096×4096</h2>
+    <p>A weight matrix is nothing more than <b>a grid of numbers that turns a vector of width A into a vector of width B</b>. Its shape is written A×B, and it stores one number per (input, output) pair — so 4096×4096 = <b>16.7 million numbers</b>. That is literally what "parameters" are.</p>
+    <p>Follow the token vector top to bottom. <b>Attention</b>: W_Q, W_K, W_V produce the query/key/value views used to decide which <i>other</i> tokens to look at; W_O merges the attention heads back into one vector. <b>FFN</b>: W_up widens the vector ~3×, an activation bends it, W_down compresses it back.</p>
+    <p><b>Blue boxes = weight grids → these get sharded.</b> Dashed grey steps (norm, softmax, activation) hold ~zero weights — cheap glue, never worth sharding.</p>
+    <div class="note"><b>Honest footnote for Qwen3-235B:</b> real shapes differ — W_Q is 4096×8192 (64 heads × 128 dims), W_K/W_V are only 4096×512 (4 shared KV heads: grouped-query attention), and the "FFN" is 128 experts of 4096×1536 with 8 active per token. Different sizes, same idea: <b>every single one is a grid, and grids can be cut.</b></div>`,
   setup(body){
     const row = el('div','row');
-    const layer = el('div','modelCard'); layer.style.maxWidth='330px';
-    layer.appendChild(el('h3','','Transformer layer <span style="color:var(--dim);font-size:11px">(one of 94)</span>'));
-    ['W_Q  4096×4096','W_K  4096×512','W_V  4096×512','W_O  4096×4096','W_up  4096×12288','W_down 12288×4096'].forEach((t,i)=>{
-      const c = el('div','chip fadeIn',t); c.style.cssText+=';display:block;margin-bottom:6px;animation-delay:'+(i*0.12)+'s';
-      if(i===0){ c.style.borderColor='var(--accent)'; c.style.color='#fff'; }
-      layer.appendChild(c);
-    });
-    layer.appendChild(el('div','caption','+ norms, softmax, activation (tiny, not worth sharding)'));
-    row.appendChild(layer);
-    row.appendChild(el('div','arrow','⟶ &nbsp;stand-in ⟶'));
+    const flow = el('div','col'); flow.style.gap='7px';
+    const io = t=>{ const c=el('div','chip',t); c.style.borderColor='var(--accent)'; return c; };
+    const wbox = (name, shape, role)=>{
+      const b = el('div');
+      b.style.cssText='border:1px solid #2c4a7a;background:#12233f;border-radius:8px;padding:8px 14px;text-align:center;min-width:200px;';
+      b.innerHTML = `<div style="color:#fff;font-size:12.5px">${name} <span style="color:var(--dim)">· ${shape}</span></div><div class="caption">${role}</div>`;
+      return b;
+    };
+    const grey = t=>{ const c=el('div','caption',t); c.style.cssText+=';border:1px dashed var(--line);border-radius:6px;padding:4px 10px;'; return c; };
+    const down = ()=> el('div','arrow','↓');
+    flow.appendChild(io('x — token vector, 1×4096, arrives from previous layer'));
+    flow.appendChild(down());
+    const att = el('div'); att.style.cssText='border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px;align-items:center;';
+    att.appendChild(el('div','caption','ATTENTION — "which other tokens should I look at?"'));
+    const qkv = el('div'); qkv.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
+    qkv.appendChild(wbox('W_Q','4096×4096','make queries · 16.7M numbers'));
+    qkv.appendChild(wbox('W_K','4096×4096','make keys · 16.7M'));
+    qkv.appendChild(wbox('W_V','4096×4096','make values · 16.7M'));
+    att.appendChild(qkv);
+    att.appendChild(grey('softmax(Q·Kᵀ)·V — compares tokens with each other · NO weights'));
+    att.appendChild(wbox('W_O','4096×4096','merge heads back into one vector · 16.7M'));
+    flow.appendChild(att);
+    flow.appendChild(down());
+    const ffn = el('div'); ffn.style.cssText='border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px;align-items:center;';
+    ffn.appendChild(el('div','caption','FFN — "think about what attention gathered"'));
+    ffn.appendChild(wbox('W_up','4096×12288','widen the vector ×3 · 50M numbers'));
+    ffn.appendChild(grey('activation (SiLU) — bends each number · NO weights'));
+    ffn.appendChild(wbox('W_down','12288×4096','compress back to width 4096 · 50M'));
+    flow.appendChild(ffn);
+    flow.appendChild(down());
+    flow.appendChild(io('out — 1×4096 → becomes x for the next layer'));
+    row.appendChild(flow);
     const col = el('div','col');
+    col.appendChild(el('div','caption','every blue box is a grid like this —<br>too big to draw, so from here on<br>we use one stand-in:'));
     col.appendChild(mtx(W));
-    col.appendChild(el('div','caption','our 8×8 mental-model matrix <b>W</b><br>(real, verifiable numbers — they stay<br>consistent for the whole simulation)'));
+    col.appendChild(el('div','caption','our 8×8 stand-in <b>W</b> for ANY of them<br>(same real numbers for the whole simulation)'));
     row.appendChild(col);
     body.appendChild(row);
   }
