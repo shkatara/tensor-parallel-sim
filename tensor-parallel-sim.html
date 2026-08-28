@@ -296,70 +296,29 @@ P1.push({
   }
 });
 
-/* ---- 1.4 what is inside a layer ---- */
+/* ---- 1.4 the shard (merged with layer contents) ---- */
 P1.push({
-  title:'Zoom in: a layer = a few weight grids the token vector flows through',
-  text:`<h2>How to read a shape like 4096×4096</h2>
-    <p>A weight matrix is nothing more than <b>a grid of numbers that turns a vector of width A into a vector of width B</b>. Its shape is written A×B, and it stores one number per (input, output) pair — so 4096×4096 = <b>16.7 million numbers</b>. That is literally what "parameters" are.</p>
-    <p>Follow the token vector top to bottom. <b>Attention</b>: W_Q, W_K, W_V produce the query/key/value views used to decide which <i>other</i> tokens to look at; W_O merges the attention heads back into one vector. <b>FFN</b>: W_up widens the vector ~3×, an activation bends it, W_down compresses it back.</p>
-    <p><b>Blue boxes = weight grids → these get sharded.</b> Dashed grey steps (norm, softmax, activation) hold ~zero weights — cheap glue, never worth sharding.</p>
-    <div class="note"><b>Honest footnote for Qwen3-235B:</b> real shapes differ — W_Q is 4096×8192 (64 heads × 128 dims), W_K/W_V are only 4096×512 (4 shared KV heads: grouped-query attention), and the "FFN" is 128 experts of 4096×1536 with 8 active per token. Different sizes, same idea: <b>every single one is a grid, and grids can be cut.</b></div>`,
-  setup(body){
-    const row = el('div','row');
-    const flow = el('div','col'); flow.style.gap='7px';
-    const io = t=>{ const c=el('div','chip',t); c.style.borderColor='var(--accent)'; return c; };
-    const wbox = (name, shape, role)=>{
-      const b = el('div');
-      b.style.cssText='border:1px solid #2c4a7a;background:#12233f;border-radius:8px;padding:8px 14px;text-align:center;min-width:200px;';
-      b.innerHTML = `<div style="color:#fff;font-size:12.5px">${name} <span style="color:var(--dim)">· ${shape}</span></div><div class="caption">${role}</div>`;
-      return b;
-    };
-    const grey = t=>{ const c=el('div','caption',t); c.style.cssText+=';border:1px dashed var(--line);border-radius:6px;padding:4px 10px;'; return c; };
-    const down = ()=> el('div','arrow','↓');
-    flow.appendChild(io('x — token vector, 1×4096, arrives from previous layer'));
-    flow.appendChild(down());
-    const att = el('div'); att.style.cssText='border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px;align-items:center;';
-    att.appendChild(el('div','caption','ATTENTION — "which other tokens should I look at?"'));
-    const qkv = el('div'); qkv.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
-    qkv.appendChild(wbox('W_Q','4096×4096','make queries · 16.7M numbers'));
-    qkv.appendChild(wbox('W_K','4096×4096','make keys · 16.7M'));
-    qkv.appendChild(wbox('W_V','4096×4096','make values · 16.7M'));
-    att.appendChild(qkv);
-    att.appendChild(grey('softmax(Q·Kᵀ)·V — compares tokens with each other · NO weights'));
-    att.appendChild(wbox('W_O','4096×4096','merge heads back into one vector · 16.7M'));
-    flow.appendChild(att);
-    flow.appendChild(down());
-    const ffn = el('div'); ffn.style.cssText='border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px;align-items:center;';
-    ffn.appendChild(el('div','caption','FFN — "think about what attention gathered"'));
-    ffn.appendChild(wbox('W_up','4096×12288','widen the vector ×3 · 50M numbers'));
-    ffn.appendChild(grey('activation (SiLU) — bends each number · NO weights'));
-    ffn.appendChild(wbox('W_down','12288×4096','compress back to width 4096 · 50M'));
-    flow.appendChild(ffn);
-    flow.appendChild(down());
-    flow.appendChild(io('out — 1×4096 → becomes x for the next layer'));
-    row.appendChild(flow);
-    const col = el('div','col');
-    col.appendChild(el('div','caption','every blue box is a grid like this —<br>too big to draw, so from here on<br>we use one stand-in:'));
-    col.appendChild(mtx(W));
-    col.appendChild(el('div','caption','our 8×8 stand-in <b>W</b> for ANY of them<br>(same real numbers for the whole simulation)'));
-    row.appendChild(col);
-    body.appendChild(row);
-  }
-});
-
-/* ---- 1.5 the shard ---- */
-P1.push({
-  title:'The shard: W is cut into column blocks — each GPU keeps 8×2 real numbers',
-  text:`<h2>What is actually IN a shard?</h2>
-    <p>Nothing exotic: <b>a rectangular block of the weight numbers</b>. We cut the 8×8 matrix <b>by columns</b>: GPU 0 gets columns 0–1, GPU 1 gets columns 2–3, and so on. Each GPU stores an <b>8×2 block</b> — 16 of the 64 numbers.</p>
-    <p>Watch: the numbers don't change, they just <i>move house</i>. Put the four blocks side by side and you'd have W back, bit for bit.</p>
+  title:'What gets sliced: a layer stores a few weight grids — here one becomes 4 shards',
+  text:`<h2>What is actually IN a layer — and in a shard?</h2>
+    <p>Nothing is running yet; we are still <i>loading</i>. What a layer <b>stores</b> is a handful of weight matrices — <code>W_Q, W_K, W_V, W_O</code> (attention) and <code>W_up, W_down</code> (FFN). Each is just <b>a grid of numbers</b>: a 4096×4096 one holds 16.7 million of them. The rest of the layer (norms, softmax, activation) stores ~nothing. <i>What these grids do with an input is Part 2's job — for loading, only their size matters.</i></p>
+    <p>Such grids don't fit on a screen, so one <b>8×8 stand-in</b> represents any of them — with real numbers that stay fixed for the whole simulation.</p>
+    <p>A shard is nothing exotic: <b>a rectangular block of those numbers</b>. Cut by columns: GPU 0 gets columns 0–1, GPU 1 gets 2–3, and so on — an <b>8×2 block</b>, 16 of the 64 numbers, per GPU. The numbers don't change, they just <i>move house</i>; side by side the four blocks would be W again, bit for bit.</p>
     <div class="note">There is a second cut — <b>by rows</b> — and the difference between the two decides whether the join is a <i>concat</i> or an <i>AllReduce</i>. That's the punchline of Part 2, step 4.</div>
     <div class="key">This happens to <b>every weight matrix of every one of the 94 layers</b> at model-load time. That IS "loading a model on 4 GPUs".</div>`,
   setup(body, id){
     const top = el('div','col');
+    const chips = el('div'); chips.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
+    ['W_Q','W_K','W_V','W_O','W_up','W_down'].forEach((n,i)=>{
+      const c = el('div','chip',n);
+      if(i===0){ c.style.borderColor='var(--accent)'; c.style.color='#fff'; }
+      chips.appendChild(c);
+    });
+    top.appendChild(el('div','caption','one layer stores these weight grids — every one gets sharded the same way; we demo the first:'));
+    top.appendChild(chips);
     const wm = mtx(W, {id:'srcW'});
+    top.appendChild(el('div','arrow','↓'));
     top.appendChild(wm);
-    top.appendChild(el('div','caption','W (8×8) — watch the columns take their GPU color, then fly down'));
+    top.appendChild(el('div','caption','W (8×8 stand-in) — watch the columns take their GPU color, then fly down'));
     body.appendChild(top);
     const row = el('div','row'); row.style.marginTop='26px';
     const holders=[];
