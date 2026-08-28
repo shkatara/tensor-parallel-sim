@@ -428,7 +428,7 @@ P2.push({
   text:`<h2>From text to numbers</h2>
     <p>The tokenizer maps each piece of text to an ID; the embedding table turns each ID into a vector. <b>Why 4096?</b> That's the model's <i>hidden size</i> — the fixed internal width of Qwen3-235B-A22B. Every token, whichever it is, becomes exactly 4096 numbers; the embedding table is literally a ~151k (vocab) × 4096 matrix and the ID picks a row. Here we shrink 4096 → <b>8</b> so it fits on screen.</p>
     <p><b>All three embeddings enter layer 1 together</b>, stacked into one 3×8 matrix — that stack IS the prefill input. Nothing waits its turn.</p>
-    <p>The bright row ("The") is the one whose arithmetic we verify by hand in the next steps — but the next step shows all three rows computing at once.</p>`,
+    <p>Every row is treated identically from here on. Only step 4 (AllReduce) zooms into a single row — and says so when it does — purely to keep the number count readable.</p>`,
   setup(body){
     const row = el('div','row');
     const toks = [['The','X = the row we track', E[0]],['▁cat','', E[1]],['▁sat','', E[2]]];
@@ -452,10 +452,7 @@ P2.push({
     row.appendChild(el('div','arrow','⟶ stack ⟶'));
     const stackCol = el('div','col');
     const stacked = mtx(E, {small:true});
-    stacked.querySelectorAll('.cell').forEach(c=>{
-      if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; }
-      else { c.style.opacity='.55'; }
-    });
+    stacked.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
     stacked.classList.add('fadeIn'); stacked.style.animationDelay='.8s';
     stackCol.appendChild(stacked);
     stackCol.appendChild(el('div','caption','X (3×8) — the ACTUAL input to layer 1:<br>all tokens, one matrix'));
@@ -472,17 +469,14 @@ P2.push({
   text:`<h2>The full-size matmul — all tokens at once</h2>
     <p>The input is the full 3×8 block. Key fact: <code>(3×8)·(8×8)</code> is nothing more than <b>three independent</b> <code>(1×8)·(8×8)</code> products sharing the same W — the "cat" row never touches the "The" row's arithmetic. Watch: for every column of W, <b>all three output cells fill simultaneously</b>.</p>
     <p>Per token row: 8 columns × 8 = 64 multiply-adds. Three rows → <b>192 total</b>, all owned by one GPU. Longer prompt = more rows = more work, but zero extra <i>sequential</i> depth — that independence is exactly what GPUs (and step 3) exploit.</p>
-    <p>Remember the bright row's result <b>Y</b> — the sharded versions must reproduce it exactly.</p>
+    <p>Remember this 3×8 output — the sharded versions must reproduce <b>every cell</b> of it exactly.</p>
     <p>Real scale: 4096×4096 → <b>~16.7 million</b> multiply-adds per matrix per token, ~6 matrices per layer, 94 layers, × every prompt token. That mountain is what you wait for before the first token.</p>`,
   setup(body, id){
     const row = el('div','row');
     const colL = el('div','col');
     const xm = mtx(E, {small:true});
-    xm.querySelectorAll('.cell').forEach(c=>{
-      if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; }
-      else { c.style.opacity='.55'; }
-    });
-    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8) — ALL rows multiply W;<br>bright = "The", just highlighted for tracking'));
+    xm.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
+    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8) — one row per token,<br>all rows multiply W together'));
     row.appendChild(colL);
     row.appendChild(el('div','eq','·'));
     const colW = el('div','col');
@@ -509,8 +503,7 @@ P2.push({
         for(let t=0;t<3;t++){
           const ycell = ym.querySelectorAll('.cell')[t*8+c];
           ycell.textContent = YM[t][c]; ycell.classList.add('flash');
-          if(t===0){ ycell.style.background='#14304d'; ycell.style.color='#fff'; }
-          else { ycell.style.opacity='.55'; }
+          ycell.style.background='#14304d'; ycell.style.color='#fff';
         }
         cnt.innerHTML = `multiply-adds: <b>${(c+1)*24}</b> / 192 (64 per token row)`;
         tf.style.transition='width .35s linear'; tf.style.width = ((c+1)*12.5)+'%';
@@ -530,7 +523,7 @@ P2.push({
   setup(body, id){
     const bc = el('div','col');
     const bx = mtx(E,{small:true});
-    bx.querySelectorAll('.cell').forEach(c=>{ if(+c.dataset.r===0){ c.style.background='#14304d'; c.style.color='#fff'; } });
+    bx.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
     bc.appendChild(bx);
     bc.appendChild(el('div','caption','the FULL 3×8 block — every token — is broadcast to all 4 GPUs ↓'));
     body.appendChild(bc);
@@ -574,7 +567,6 @@ P2.push({
             const yc = p.ym.querySelectorAll('.cell')[t*2+c];
             yc.textContent = YM[t][2*p.g+c]; yc.classList.add('flash');
             yc.style.background=GDARK[p.g]; yc.style.color=GHEX[p.g];
-            if(t>0) yc.style.opacity='.6';
           }
           p.cnt.innerHTML = `<b>${(c+1)*24}</b>/48 MACs`;
         });
@@ -586,12 +578,11 @@ P2.push({
         for(let t=0;t<3;t++) for(let c=0;c<2;c++){
           const cell = joined.querySelectorAll('.cell')[t*8+2*g+c];
           cell.textContent = YM[t][2*g+c]; cell.style.background=GDARK[g]; cell.style.color=GHEX[g];
-          if(t>0) cell.style.opacity='.6';
           cell.classList.add('flash');
         }
         await sleep(280); if(!alive(id)) return;
       }
-      check.innerHTML = `all 3 rows match the single-GPU 3×8 output exactly <span class="okmark">✓</span> — tracked row: [${Y.join(' ')}]`;
+      check.innerHTML = `all 24 cells match the single-GPU 3×8 output exactly <span class="okmark">✓</span>`;
     })();
   }
 });
@@ -601,7 +592,7 @@ P2.push({
   title:'The other cut: rows. Now every GPU makes a PARTIAL Y — AllReduce sums them',
   text:`<h2>Where AllReduce actually comes from</h2>
     <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). It only needs the matching 2 entries of X. Each GPU computes <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… but it's only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU saw only 2.</p>
-    <p><i>Display note:</i> this step deliberately shows only the tracked "The" row — with all 3 tokens the partials become four 3×8 blocks and the screen drowns in numbers. In reality all rows are AllReduced together in one shot, exactly like the previous steps.</p>
+    <p><i>Display note:</i> this step deliberately shows only ONE row of the block — "The", the first token — because with all 3 tokens the partials become four 3×8 blocks and the screen drowns in numbers. In reality all rows are AllReduced together in one shot, exactly like the previous steps.</p>
     <p><b>AllReduce</b> = all GPUs pool their partial vectors, sum element-wise, and <i>everyone</i> ends up holding the identical total. Look: the four weird partial rows add up to exactly the same Y again.</p>
     <div class="key"><b>Why both cuts exist:</b> a layer chains two matmuls (up-projection → down-projection). Make the 1st <b>column-split</b> and the 2nd <b>row-split</b>, and the outputs of the 1st are already exactly the input slices the 2nd needs — <b>zero communication in between</b>. Only ONE AllReduce at the end of the block. That's Megatron-style tensor parallelism.</div>`,
   setup(body, id){
