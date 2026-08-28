@@ -385,12 +385,14 @@ const P2 = [];
 P2.push({
   title:'Prefill input: "The cat sat" → token IDs → embedding vectors',
   text:`<h2>From text to numbers</h2>
-    <p>The tokenizer maps each piece of text to an ID; the embedding table turns each ID into a vector. <b>Why 4096?</b> That's the model's <i>hidden size</i> — the fixed internal width of Qwen3-235B-A22B. Every token, whichever it is, becomes exactly 4096 numbers; the embedding table is literally a ~151k (vocab) × 4096 matrix and the ID picks a row. Here we shrink 4096 → <b>8</b> so it fits on screen.</p>
+    <p>The tokenizer maps each piece of text to an ID. Qwen3's vocabulary holds <b>exactly 151,936 token types</b> (<code>vocab_size</code> in the model's config.json), so the embedding table is literally a <b>151,936 × 4096</b> grid: one row per vocabulary entry, each row 4096 numbers wide — 4096 being the <i>hidden size</i> (same config file). An ID does no math at all: <b>it just picks a row</b>. "The" → one specific row out of 151,936; rows for tokens your prompt doesn't use are never even read.</p>
+    <p>We shrink 4096 → <b>8</b> so it fits on screen — the dashed <b>⋯</b> cell marks the 4,088 numbers we're not drawing.</p>
     <p><b>All three embeddings enter layer 1 together</b>, stacked into one 3×8 matrix — that stack IS the prefill input. Nothing waits its turn.</p>
     <p>Every row is treated identically from here on. Only step 4 (AllReduce) zooms into a single row — and says so when it does — purely to keep the number count readable.</p>`,
   setup(body){
+    const ghost = ()=>{ const g=el('div','cell small','⋯'); g.style.cssText+=';border:1px dashed var(--line);background:transparent;color:var(--dim);'; return g; };
     const row = el('div','row');
-    const toks = [['The','X = the row we track', E[0]],['▁cat','', E[1]],['▁sat','', E[2]]];
+    const toks = [['The','row 785 of 151,936 · 1×8 shown, really 1×4096', E[0]],['▁cat','row 4,415', E[1]],['▁sat','row 7,139', E[2]]];
     const col = el('div','col');
     toks.forEach(([t, note, v], i)=>{
       const r = el('div','row'); r.style.alignItems='center';
@@ -401,8 +403,10 @@ P2.push({
       r.appendChild(idc);
       r.appendChild(el('div','arrow','→'));
       const m = mtx([v], {small:true}); m.classList.add('fadeIn'); m.style.animationDelay=(i*.2+.2)+'s';
-      if(i===0){ m.querySelectorAll('.cell').forEach(c=>{c.style.background='#14304d'; c.style.color='#fff';}); }
-      r.appendChild(m);
+      m.querySelectorAll('.cell').forEach(c=>{c.style.background='#14304d'; c.style.color='#fff';});
+      const wrap = el('div'); wrap.style.cssText='display:flex;align-items:center;gap:2px;';
+      wrap.appendChild(m); wrap.appendChild(ghost());
+      r.appendChild(wrap);
       if(note) r.appendChild(el('div','caption',note));
       col.appendChild(r);
     });
@@ -412,9 +416,13 @@ P2.push({
     const stackCol = el('div','col');
     const stacked = mtx(E, {small:true});
     stacked.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
-    stacked.classList.add('fadeIn'); stacked.style.animationDelay='.8s';
-    stackCol.appendChild(stacked);
-    stackCol.appendChild(el('div','caption','X (3×8) — the ACTUAL input to layer 1:<br>all tokens, one matrix'));
+    const swrap = el('div','fadeIn'); swrap.style.cssText='display:flex;align-items:center;gap:2px;animation-delay:.8s;';
+    swrap.appendChild(stacked);
+    const gcol = el('div'); gcol.style.cssText='display:flex;flex-direction:column;gap:2px;';
+    for(let i=0;i<3;i++){ const g=el('div','cell small','⋯'); g.style.cssText+=';border:1px dashed var(--line);background:transparent;color:var(--dim);'; gcol.appendChild(g); }
+    swrap.appendChild(gcol);
+    stackCol.appendChild(swrap);
+    stackCol.appendChild(el('div','caption','X (3×8 shown, really 3×4096) —<br>the ACTUAL input to layer 1: all tokens, one matrix'));
     row.appendChild(stackCol);
     body.appendChild(row);
     body.appendChild(el('div','bigNote','Prefill processes this whole 3×8 block in one go — no token-by-token loop. (The loop is <b>decode</b>, a different story with different bottlenecks.) Next: the full block hits W on one GPU, and you\'ll see the three rows never interact inside a matmul.'));
@@ -435,16 +443,16 @@ P2.push({
     const colL = el('div','col');
     const xm = mtx(E, {small:true});
     xm.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
-    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8) — one row per token,<br>all rows multiply W together'));
+    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8, really 3×4096) — one row<br>per token, all rows multiply W together'));
     row.appendChild(colL);
     row.appendChild(el('div','eq','·'));
     const colW = el('div','col');
-    const wm = mtx(W); colW.appendChild(wm); colW.appendChild(el('div','caption','W (8×8) — full matrix'));
+    const wm = mtx(W); colW.appendChild(wm); colW.appendChild(el('div','caption','W (8×8, really 4096×4096) — full matrix'));
     row.appendChild(colW);
     row.appendChild(el('div','eq','='));
     const colY = el('div','col');
     const ym = mtx(E.map(()=>Array(8).fill('')), {small:true});
-    colY.appendChild(ym); colY.appendChild(el('div','caption','Y (3×8) — one output<br>row per token'));
+    colY.appendChild(ym); colY.appendChild(el('div','caption','Y (3×8, really 3×4096) —<br>one output row per token'));
     row.appendChild(colY);
     body.appendChild(row);
     const meter = el('div','col'); meter.style.marginTop='22px';
