@@ -759,24 +759,32 @@ P2.push({
 P2.push({
   title:'The other cut: rows. Now every GPU makes a PARTIAL Y — AllReduce sums them',
   text:`<h2>Where AllReduce actually comes from</h2>
-    <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). It only needs the matching 2 entries of X. Each GPU computes <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… but it's only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU saw only 2.</p>
+    <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). Watch the top: X is broadcast to all four, but a row-split GPU can only use the <b>2 entries that line up with the rows it holds</b> — row r of W is multiplied by entry r of X, so 2 rows means 2 entries. Each GPU then sweeps its shard column by column, computing <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… which is only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU saw only 2.</p>
     <p><i>Display note:</i> this step deliberately shows only ONE row of the block — "The", the first token — because with all 3 tokens the partials become four 3×8 blocks and the screen drowns in numbers. In reality all rows are AllReduced together in one shot, exactly like the previous steps.</p>
     <p><b>AllReduce</b> = all GPUs pool their partial vectors, sum element-wise, and <i>everyone</i> ends up holding the identical total. Look: the four weird partial rows add up to exactly the same Y again.</p>
     <div class="key"><b>Why both cuts exist:</b> a layer chains two matmuls (up-projection → down-projection). Make the 1st <b>column-split</b> and the 2nd <b>row-split</b>, and the outputs of the 1st are already exactly the input slices the 2nd needs — <b>zero communication in between</b>. Only ONE AllReduce at the end of the block. That's Megatron-style tensor parallelism.</div>`,
   setup(body, id){
-    const row = el('div','row');
+    const bc = el('div','col');
+    const xFull = mtx([X]);
+    xFull.querySelectorAll('.cell').forEach(paintInk);
+    bc.appendChild(xFull);
+    bc.appendChild(el('div','caption','X — the "The" row (1×8, really 1×4096) — broadcast to all 4 GPUs.<br>A row-split GPU reads only the 2 entries that line up with the rows it owns ↓'));
+    body.appendChild(bc);
+    const row = el('div','row'); row.style.marginTop='14px';
     const parts=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col');
-      const xs = mtx([[X[2*g], X[2*g+1]]], {colorOf:()=>g, small:true});
-      inner.appendChild(xs); inner.appendChild(el('div','caption','X slice (1×2)'));
-      const shard = [W[2*g], W[2*g+1]];
-      inner.appendChild(mtx(shard,{colorOf:()=>g, small:true}));
+      const xs = mtx([['','']], {small:true});
+      inner.appendChild(xs); inner.appendChild(el('div','caption',`X slice (1×2): entries ${2*g}–${2*g+1}`));
+      inner.appendChild(el('div','plus','×'));
+      const sm = mtx([W[2*g], W[2*g+1]],{colorOf:()=>g, small:true});
+      inner.appendChild(sm);
       inner.appendChild(el('div','caption',`row shard (2×8): rows ${2*g}–${2*g+1}`));
       const pm = mtx([Array(8).fill('')],{small:true});
       inner.appendChild(pm); inner.appendChild(el('div','caption','partial Y (1×8)'));
-      row.appendChild(gpuBox(g, inner));
-      parts.push(pm);
+      const bx = gpuBox(g, inner);
+      row.appendChild(bx);
+      parts.push({pm, xs, sm, bx, g});
     }
     body.appendChild(row);
     const ar = el('div','col'); ar.style.marginTop='18px';
@@ -797,17 +805,36 @@ P2.push({
     const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical full Y</b> — exactly what they need to broadcast-start the next layer. Cost: one exchange of a tiny 1×8 (really 1×4096) vector over NVLink, vs. re-doing 16.7M multiply-adds. Cheap — but not free. This is the "communication tax" you\'ll see in the TTFT race.');
     body.appendChild(foot);
     (async()=>{
-      await sleep(600); if(!alive(id)) return;
-      // compute partials in parallel
+      await sleep(500); if(!alive(id)) return;
+      // broadcast: each GPU takes delivery of the 2 X entries matching its rows
+      const srcCells = xFull.querySelectorAll('.cell');
+      for(const p of parts){
+        if(!alive(id)) return;
+        p.bx.classList.add('active');
+        p.xs.querySelectorAll('.cell').forEach((cell,i)=>{
+          const c = 2*p.g + i;
+          paint(srcCells[c], p.g); srcCells[c].classList.add('flash');
+          cell.textContent = X[c]; paint(cell, p.g); cell.classList.add('flash');
+        });
+        await sleep(380);
+      }
+      await sleep(400); if(!alive(id)) return;
+      // multiply: all 4 GPUs sweep their shard column by column, in parallel
       for(let c=0;c<8;c++){
         if(!alive(id)) return;
-        parts.forEach((pm,g)=>{
-          const cell = pm.querySelectorAll('.cell')[c];
-          cell.textContent = rowPartial[g][c];
-          paint(cell,g);
+        parts.forEach(p=>p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c)));
+        await sleep(170); if(!alive(id)) return;
+        parts.forEach(p=>{
+          const cell = p.pm.querySelectorAll('.cell')[c];
+          cell.textContent = rowPartial[p.g][c];
+          paint(cell, p.g);
         });
-        await sleep(160);
+        await sleep(110);
       }
+      parts.forEach(p=>{
+        p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
+        p.bx.classList.remove('active');
+      });
       await sleep(500); if(!alive(id)) return;
       // fly partials into the stack
       for(let g=0;g<4;g++){
