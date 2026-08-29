@@ -353,7 +353,7 @@ P1.push({
     <p>Nothing is running yet; we are still <i>loading</i>. What a layer <b>stores</b> is a handful of weight matrices — <code>W_Q, W_K, W_V, W_O</code> (attention) and <code>W_up, W_down</code> (FFN). Each is just <b>a grid of numbers</b>: a 4096×4096 one holds 16.7 million of them. The rest of the layer (norms, softmax, activation) stores ~nothing. <i>What these grids do with an input is Part 2's job — for loading, only their size matters.</i></p>
     <p>Such grids don't fit on a screen, so one <b>8×8 stand-in</b> represents any of them — with real numbers that stay fixed for the whole simulation.</p>
     <p>A shard is nothing exotic: <b>a rectangular block of those numbers</b>. Cut by columns: GPU 0 gets columns 0–1, GPU 1 gets 2–3, and so on — an <b>8×2 block</b>, 16 of the 64 numbers, per GPU. The numbers don't change, they just <i>move house</i>; side by side the four blocks would be W again, bit for bit.</p>
-    <div class="note">There is a second cut — <b>by rows</b> — and the difference between the two decides whether the join is a <i>concat</i> or an <i>AllReduce</i>. That's the punchline of Part 2, step 4.</div>
+    <div class="note">There is a second cut — <b>by rows</b> — and the difference between the two decides whether the join is a <i>concat</i> or an <i>AllReduce</i>. That's the punchline of Part 2, step 5.</div>
     <div class="key">This happens to <b>every weight matrix of every one of the 94 layers</b> at model-load time. That IS "loading a model on 4 GPUs".</div>`,
   setup(body, id){
     const top = el('div','col');
@@ -431,52 +431,114 @@ P1.push({
 /* ================= PART 2 ================= */
 const P2 = [];
 
-/* ---- 2.1 embeddings ---- */
+/* ---- 2.1 the embedding table + 2.2 the lookup ---- */
+const TOKS = [ {t:'"The"', id:785, v:E[0]}, {t:'"▁cat"', id:4415, v:E[1]}, {t:'"▁sat"', id:7139, v:E[2]} ];
+const ghostCell = ()=>{ const g=el('div','cell small','⋯'); g.style.cssText+=';border:1px dashed var(--line);background:transparent;color:var(--dim);'; return g; };
+function embTable(){
+  const fill = id => Array.from({length:8},(_,c)=>((id*7 + c*13) % 9) - 4);
+  const spec = [
+    {id:0, v:fill(0)}, {id:1, v:fill(1)}, {gap:1},
+    {id:785, v:E[0], tok:TOKS[0].t}, {gap:1},
+    {id:4415, v:E[1], tok:TOKS[1].t}, {gap:1},
+    {id:7139, v:E[2], tok:TOKS[2].t}, {gap:1},
+    {id:151935, v:fill(151935)}
+  ];
+  const box = el('div'); box.style.cssText='display:flex;flex-direction:column;gap:3px;align-items:flex-start;';
+  const rowEls = {};
+  spec.forEach(s=>{
+    if(s.gap){ const g=el('div','caption','⋮'); g.style.cssText+=';width:100%;text-align:center;'; box.appendChild(g); return; }
+    const r = el('div'); r.style.cssText='display:flex;align-items:center;gap:8px;border-radius:6px;padding:1px 4px;';
+    const lbl = el('div','caption','row '+s.id.toLocaleString('en-US')); lbl.style.cssText+=';min-width:82px;text-align:right;';
+    r.appendChild(lbl);
+    const m = mtx([s.v],{small:true});
+    const wrap = el('div'); wrap.style.cssText='display:flex;align-items:center;gap:2px;';
+    wrap.appendChild(m); wrap.appendChild(ghostCell());
+    r.appendChild(wrap);
+    const tokl = el('div','caption',''); tokl.style.minWidth='46px';
+    r.appendChild(tokl);
+    box.appendChild(r);
+    if(s.tok) rowEls[s.id] = {r, m, tokl, tok:s.tok};
+  });
+  return {box, rowEls};
+}
+
 P2.push({
-  title:'Prefill input: "The cat sat" → token IDs → embedding vectors',
-  text:`<h2>From text to numbers</h2>
-    <p>The tokenizer maps each piece of text to an ID. Qwen3's vocabulary holds <b>exactly 151,936 token types</b> (<code>vocab_size</code> in the model's config.json), so the embedding table is literally a <b>151,936 × 4096</b> grid: one row per vocabulary entry, each row 4096 numbers wide — 4096 being the <i>hidden size</i> (same config file). An ID does no math at all: <b>it just picks a row</b>. "The" → one specific row out of 151,936; rows for tokens your prompt doesn't use are never even read.</p>
-    <p>We shrink 4096 → <b>8</b> so it fits on screen — the dashed <b>⋯</b> cell marks the 4,088 numbers we're not drawing.</p>
-    <div class="key"><b>The general rule (works for any transformer):</b> every model fixes a <i>vocab size</i> and a <i>hidden size</i>, so its embedding table is always <code>vocab_size × hidden_size</code>. Any text becomes tokens → the tokenizer assigns each an ID → each ID indexes one row of the table. A prompt of N tokens therefore always enters layer 1 as an <code>N × hidden_size</code> matrix. "I like mango" → 3 tokens → 3×4096 here; a 1,000-token prompt → 1000×4096. Same machinery, any model, any prompt.</div>
-    <p><b>All three embeddings enter layer 1 together</b>, stacked into one 3×8 matrix — that stack IS the prefill input. Nothing waits its turn.</p>
-    <p>Every row is treated identically from here on. Only step 4 (AllReduce) zooms into a single row — and says so when it does — purely to keep the number count readable.</p>`,
+  title:'Before any input: the embedding table — 151,936 rows × 4096 columns',
+  text:`<h2>One table, fixed at design time</h2>
+    <p>Every transformer fixes two numbers up front: a <b>vocab size</b> — how many distinct token types its tokenizer knows — and a <b>hidden size</b> — the width of every vector inside the model. The embedding table is always <code>vocab_size × hidden_size</code>. For Qwen3-235B-A22B, straight from config.json: <b>151,936 × 4096</b>.</p>
+    <p>One row per token type; every row is 4096 learned numbers (8 drawn — the dashed <b>⋯</b> marks the 4,088 we skip). It's an ordinary weight matrix, loaded onto the GPUs with everything else: 151,936 × 4096 × 2 bytes ≈ <b>1.2 GB</b> of the ~470 GB.</p>
+    <p><b>No text has arrived yet.</b> The table just sits in memory, one row waiting for every possible token. Next step: a prompt shows up and we go find its rows.</p>`,
   setup(body){
-    const ghost = ()=>{ const g=el('div','cell small','⋯'); g.style.cssText+=';border:1px dashed var(--line);background:transparent;color:var(--dim);'; return g; };
-    const row = el('div','row');
-    const toks = [['The','row 785 of 151,936 · 1×8 shown, really 1×4096', E[0]],['▁cat','row 4,415', E[1]],['▁sat','row 7,139', E[2]]];
     const col = el('div','col');
-    toks.forEach(([t, note, v], i)=>{
-      const r = el('div','row'); r.style.alignItems='center';
-      const chip = el('div','chip fadeIn', `"${t}"`); chip.style.animationDelay=(i*.2)+'s';
-      r.appendChild(chip);
-      r.appendChild(el('div','arrow','→'));
-      const idc = el('div','tag fadeIn','id '+[785,4415,7139][i]); idc.style.animationDelay=(i*.2+.1)+'s';
-      r.appendChild(idc);
-      r.appendChild(el('div','arrow','→'));
-      const m = mtx([v], {small:true}); m.classList.add('fadeIn'); m.style.animationDelay=(i*.2+.2)+'s';
-      m.querySelectorAll('.cell').forEach(c=>{c.style.background='#14304d'; c.style.color='#fff';});
-      const wrap = el('div'); wrap.style.cssText='display:flex;align-items:center;gap:2px;';
-      wrap.appendChild(m); wrap.appendChild(ghost());
-      r.appendChild(wrap);
-      if(note) r.appendChild(el('div','caption',note));
-      col.appendChild(r);
+    const {box} = embTable();
+    col.appendChild(el('div','caption','the embedding table (5 of 151,936 rows drawn)'));
+    const frame = el('div'); frame.style.cssText='border:1px solid var(--line);border-radius:10px;padding:12px 16px;background:var(--panel);';
+    frame.appendChild(box);
+    frame.classList.add('fadeIn');
+    col.appendChild(frame);
+    col.appendChild(el('div','caption','shape: 151,936 × 4096 · one row per vocabulary entry · ≈1.2 GB in BF16'));
+    body.appendChild(col);
+  }
+});
+
+P2.push({
+  title:'A prompt arrives: look up "The cat sat" → stack the rows → X (3×8)',
+  text:`<h2>Lookup, not math</h2>
+    <p>The tokenizer splits "The cat sat" into 3 tokens and assigns each an ID <i>(IDs shown are illustrative)</i>. An ID is nothing but a <b>row index</b> into the table. No multiplication happens here — the row is simply <b>copied out</b>. The other 151,933 rows are never even read.</p>
+    <p>The three copied rows are stacked in prompt order into <b>X</b> — a 3×8 matrix here, really <b>3×4096</b>. That stack IS the prefill input; nothing waits its turn.</p>
+    <div class="key"><b>The general rule (any transformer, any prompt):</b> N tokens → look up N rows → layer 1 always receives an <code>N × hidden_size</code> matrix. "I like mango" → 3×4096; a 1,000-token prompt → 1000×4096. Same machinery, any model, any prompt.</div>
+    <p>Every row is treated identically from here on. Only the AllReduce step (step 5) zooms into a single row — and says so when it does — purely to keep the number count readable.</p>`,
+  setup(body, id){
+    const chipsRow = el('div','row');
+    const idTags = [];
+    TOKS.forEach((tk,i)=>{
+      const grp = el('div'); grp.style.cssText='display:flex;align-items:center;gap:6px;';
+      const chip = el('div','chip fadeIn', tk.t); chip.style.animationDelay=(i*.15)+'s';
+      grp.appendChild(chip);
+      grp.appendChild(el('div','arrow','→'));
+      const tag = el('div','tag','id '+tk.id); tag.style.opacity='0'; tag.style.transition='opacity .4s';
+      grp.appendChild(tag); idTags.push(tag);
+      chipsRow.appendChild(grp);
     });
-    row.appendChild(col);
-    // stack the three vectors into the actual layer-1 input
-    row.appendChild(el('div','arrow','⟶ stack ⟶'));
-    const stackCol = el('div','col');
-    const stacked = mtx(E, {small:true});
-    stacked.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
-    const swrap = el('div','fadeIn'); swrap.style.cssText='display:flex;align-items:center;gap:2px;animation-delay:.8s;';
-    swrap.appendChild(stacked);
+    body.appendChild(chipsRow);
+    const row = el('div','row'); row.style.marginTop='16px';
+    const tcol = el('div','col');
+    const {box, rowEls} = embTable();
+    const frame = el('div'); frame.style.cssText='border:1px solid var(--line);border-radius:10px;padding:12px 16px;background:var(--panel);';
+    frame.appendChild(box);
+    tcol.appendChild(frame);
+    tcol.appendChild(el('div','caption','the same embedding table — watch the 3 rows get found'));
+    row.appendChild(tcol);
+    row.appendChild(el('div','arrow','⟶ copy rows ⟶'));
+    const xcol = el('div','col');
+    const xm = mtx(E.map(()=>Array(8).fill('')),{small:true});
+    const xwrap = el('div'); xwrap.style.cssText='display:flex;align-items:center;gap:2px;';
+    xwrap.appendChild(xm);
     const gcol = el('div'); gcol.style.cssText='display:flex;flex-direction:column;gap:2px;';
-    for(let i=0;i<3;i++){ const g=el('div','cell small','⋯'); g.style.cssText+=';border:1px dashed var(--line);background:transparent;color:var(--dim);'; gcol.appendChild(g); }
-    swrap.appendChild(gcol);
-    stackCol.appendChild(swrap);
-    stackCol.appendChild(el('div','caption','X (3×8 shown, really 3×4096) —<br>the ACTUAL input to layer 1: all tokens, one matrix'));
-    row.appendChild(stackCol);
+    for(let i=0;i<3;i++) gcol.appendChild(ghostCell());
+    xwrap.appendChild(gcol);
+    xcol.appendChild(xwrap);
+    xcol.appendChild(el('div','caption','X (3×8 shown, really 3×4096) —<br>the input to layer 1: all tokens, one matrix'));
+    row.appendChild(xcol);
     body.appendChild(row);
     body.appendChild(el('div','bigNote','Prefill processes this whole 3×8 block in one go — no token-by-token loop. (The loop is <b>decode</b>, a different story with different bottlenecks.) Next: the full block hits W on one GPU, and you\'ll see the three rows never interact inside a matmul.'));
+    (async()=>{
+      await sleep(700);
+      for(let t=0;t<3;t++){
+        if(!alive(id)) return;
+        idTags[t].style.opacity='1';
+        await sleep(350); if(!alive(id)) return;
+        const re = rowEls[TOKS[t].id];
+        re.r.style.outline='1px solid var(--accent)';
+        re.m.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
+        re.tokl.textContent = re.tok; re.tokl.style.color='#fff';
+        await sleep(500); if(!alive(id)) return;
+        xm.querySelectorAll('.cell').forEach(c=>{
+          if(+c.dataset.r===t){ c.textContent = E[t][+c.dataset.c]; c.classList.add('flash'); c.style.background='#14304d'; c.style.color='#fff'; }
+        });
+        await sleep(400);
+      }
+    })();
   }
 });
 </script>
@@ -486,7 +548,7 @@ P2.push({
   title:'Baseline: ONE GPU computes the whole 3×8 block · W — 192 multiply-adds, alone',
   text:`<h2>The full-size matmul — all tokens at once</h2>
     <p>The input is the full 3×8 block. Key fact: <code>(3×8)·(8×8)</code> is nothing more than <b>three independent</b> <code>(1×8)·(8×8)</code> products sharing the same W — the "cat" row never touches the "The" row's arithmetic. Watch: for every column of W, <b>all three output cells fill simultaneously</b>.</p>
-    <p>Per token row: 8 columns × 8 = 64 multiply-adds. Three rows → <b>192 total</b>, all owned by one GPU. Longer prompt = more rows = more work, but zero extra <i>sequential</i> depth — that independence is exactly what GPUs (and step 3) exploit.</p>
+    <p>Per token row: 8 columns × 8 = 64 multiply-adds. Three rows → <b>192 total</b>, all owned by one GPU. Longer prompt = more rows = more work, but zero extra <i>sequential</i> depth — that independence is exactly what GPUs (and the next step) exploit.</p>
     <p>Remember this 3×8 output — the sharded versions must reproduce <b>every cell</b> of it exactly.</p>
     <p>Real scale: 4096×4096 → <b>~16.7 million</b> multiply-adds per matrix per token, ~6 matrices per layer, 94 layers, × every prompt token. That mountain is what you wait for before the first token.</p>`,
   setup(body, id){
@@ -537,7 +599,7 @@ P2.push({
   text:`<h2>Why TTFT drops: smaller matmuls, in parallel</h2>
     <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Each GPU computes <code>(3×8) · (8×2 shard)</code> = a <b>3×2 tile</b> of the output: its two columns, for ALL three tokens at once. Watch every row fill — nothing is dropped.</p>
     <p>Per GPU: 48 multiply-adds (16 per token row), all four GPUs simultaneously. Total work is still 192 — but <b>wall-clock time is 48 units, not 192</b>. That is the whole TTFT story in one picture.</p>
-    <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> tiles of the output. Joining them = laying the tiles side by side (an <b>all-gather</b>/concat). Compare the assembled 3×8 with step 2: identical, bit for bit.</div>`,
+    <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> tiles of the output. Joining them = laying the tiles side by side (an <b>all-gather</b>/concat). Compare the assembled 3×8 with step 3: identical, bit for bit.</div>`,
   setup(body, id){
     const bc = el('div','col');
     const bx = mtx(E,{small:true});
@@ -570,7 +632,7 @@ P2.push({
     joinCol.appendChild(check);
     const meter = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--ok)'; tb.appendChild(tf); meter.appendChild(tb);
     joinCol.appendChild(meter);
-    joinCol.appendChild(el('div','caption','time on 4 GPUs → 48 units (bar drawn to the same 192-unit scale as step 2)'));
+    joinCol.appendChild(el('div','caption','time on 4 GPUs → 48 units (bar drawn to the same 192-unit scale as step 3)'));
     body.appendChild(joinCol);
     (async()=>{
       await sleep(600);
