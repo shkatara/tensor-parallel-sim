@@ -437,6 +437,7 @@ P2.push({
   text:`<h2>From text to numbers</h2>
     <p>The tokenizer maps each piece of text to an ID. Qwen3's vocabulary holds <b>exactly 151,936 token types</b> (<code>vocab_size</code> in the model's config.json), so the embedding table is literally a <b>151,936 × 4096</b> grid: one row per vocabulary entry, each row 4096 numbers wide — 4096 being the <i>hidden size</i> (same config file). An ID does no math at all: <b>it just picks a row</b>. "The" → one specific row out of 151,936; rows for tokens your prompt doesn't use are never even read.</p>
     <p>We shrink 4096 → <b>8</b> so it fits on screen — the dashed <b>⋯</b> cell marks the 4,088 numbers we're not drawing.</p>
+    <div class="key"><b>The general rule (works for any transformer):</b> every model fixes a <i>vocab size</i> and a <i>hidden size</i>, so its embedding table is always <code>vocab_size × hidden_size</code>. Any text becomes tokens → the tokenizer assigns each an ID → each ID indexes one row of the table. A prompt of N tokens therefore always enters layer 1 as an <code>N × hidden_size</code> matrix. "I like mango" → 3 tokens → 3×4096 here; a 1,000-token prompt → 1000×4096. Same machinery, any model, any prompt.</div>
     <p><b>All three embeddings enter layer 1 together</b>, stacked into one 3×8 matrix — that stack IS the prefill input. Nothing waits its turn.</p>
     <p>Every row is treated identically from here on. Only step 4 (AllReduce) zooms into a single row — and says so when it does — purely to keep the number count readable.</p>`,
   setup(body){
