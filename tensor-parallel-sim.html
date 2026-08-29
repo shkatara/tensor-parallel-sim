@@ -685,7 +685,7 @@ P2.push({
 P2.push({
   title:'Same job on 4 GPUs: each multiplies X by its 8×2 shard — simultaneously',
   text:`<h2>Why TTFT drops: smaller matmuls, in parallel</h2>
-    <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Each GPU computes <code>(3×8) · (8×2 shard)</code> = a <b>3×2 tile</b> of the output: its two columns, for ALL three tokens at once. Watch every row fill — nothing is dropped.</p>
+    <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Watch X copy down to each GPU. Each GPU then computes <code>(3×8) · (8×2 shard)</code> = a <b>3×2 tile</b> of the output: its two columns, for ALL three tokens at once. Watch every row fill — nothing is dropped.</p>
     <p>Per GPU: 48 multiply-adds (16 per token row), all four GPUs simultaneously. Total work is still 192 — but <b>wall-clock time is 48 units, not 192</b>. That is the whole TTFT story in one picture.</p>
     <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> tiles of the output. Joining them = laying the tiles side by side (an <b>all-gather</b>/concat). Compare the assembled 3×8 with step 3: identical, bit for bit.</div>`,
   setup(body, id){
@@ -699,17 +699,29 @@ P2.push({
     const parts=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col');
+      const xm = mtx(E.map(()=>Array(8).fill('')),{small:true});
+      inner.appendChild(xm);
+      inner.appendChild(el('div','caption','X copy (3×8)'));
+      inner.appendChild(el('div','plus','×'));
+      const opRow = el('div','row'); opRow.style.cssText='gap:8px;align-items:center;';
       const shard = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
       const sm = mtx(shard,{colorOf:()=>g, small:true});
-      inner.appendChild(sm);
-      inner.appendChild(el('div','caption','8×2 shard'));
+      const shardCol = el('div','col');
+      shardCol.appendChild(sm);
+      shardCol.appendChild(el('div','caption',`8×2 shard<br>(cols ${2*g}–${2*g+1})`));
+      opRow.appendChild(shardCol);
+      opRow.appendChild(el('div','arrow','→'));
       const ym = mtx(E.map(()=>['','']),{small:true});
-      inner.appendChild(ym);
-      inner.appendChild(el('div','caption',`3×2 tile: cols ${2*g}–${2*g+1},<br>one row per token`));
+      const tileCol = el('div','col');
+      tileCol.appendChild(ym);
+      tileCol.appendChild(el('div','caption',`3×2 tile<br>(cols ${2*g}–${2*g+1})`));
+      opRow.appendChild(tileCol);
+      inner.appendChild(opRow);
       const cnt = el('div','counter','<b>0</b>/48 MACs');
       inner.appendChild(cnt);
-      row.appendChild(gpuBox(g, inner));
-      parts.push({sm, ym, cnt, g});
+      const gpu = gpuBox(g, inner);
+      row.appendChild(gpu);
+      parts.push({xm, sm, ym, cnt, bx:gpu, g});
     }
     body.appendChild(row);
     const joinCol = el('div','col'); joinCol.style.marginTop='20px';
@@ -723,13 +735,34 @@ P2.push({
     joinCol.appendChild(el('div','caption','time on 4 GPUs → 48 units (bar drawn to the same 192-unit scale as step 3)'));
     body.appendChild(joinCol);
     (async()=>{
-      await sleep(600);
+      await sleep(500); if(!alive(id)) return;
+      // 1. Broadcast: full 3x8 block lands on every GPU
+      const srcCells = bx.querySelectorAll('.cell');
+      parts.forEach(p=>p.bx.classList.add('active'));
+      for(let t=0;t<3;t++){
+        for(let c=0;c<8;c++){
+          const idx = t*8+c;
+          srcCells[idx].classList.add('flash');
+          paintInk(srcCells[idx]);
+          parts.forEach(p=>{
+            const cell = p.xm.querySelectorAll('.cell')[idx];
+            cell.textContent = E[t][c];
+            paintInk(cell);
+            cell.classList.add('flash');
+          });
+        }
+        await sleep(220); if(!alive(id)) return;
+      }
+      await sleep(400); if(!alive(id)) return;
+
+      // 2. Multiply: each GPU multiplies its X copy by its 8x2 shard in parallel
       for(let c=0;c<2;c++){          // both shard-columns, all GPUs in parallel, all token rows at once
         if(!alive(id)) return;
         parts.forEach(p=>{
           p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
+          p.xm.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
         });
-        await sleep(600); if(!alive(id)) return;
+        await sleep(550); if(!alive(id)) return;
         parts.forEach(p=>{
           for(let t=0;t<3;t++){
             const yc = p.ym.querySelectorAll('.cell')[t*2+c];
@@ -739,9 +772,18 @@ P2.push({
           p.cnt.innerHTML = `<b>${(c+1)*24}</b>/48 MACs`;
         });
         tf.style.transition='width .5s linear'; tf.style.width = ((c+1)*12.5)+'%'; // same scale: 48/192 = 25% total
+        await sleep(350); if(!alive(id)) return;
+        parts.forEach(p=>{
+          p.xm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
+        });
       }
-      parts.forEach(p=>p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl')));
-      await sleep(400); if(!alive(id)) return;
+      parts.forEach(p=>{
+        p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
+        p.bx.classList.remove('active');
+      });
+      await sleep(450); if(!alive(id)) return;
+
+      // 3. Concat / Gather tiles
       for(let g=0;g<4;g++){
         for(let t=0;t<3;t++) for(let c=0;c<2;c++){
           const cell = joined.querySelectorAll('.cell')[t*8+2*g+c];
@@ -822,7 +864,10 @@ P2.push({
       // multiply: all 4 GPUs sweep their shard column by column, in parallel
       for(let c=0;c<8;c++){
         if(!alive(id)) return;
-        parts.forEach(p=>p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c)));
+        parts.forEach(p=>{
+          p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
+          p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
+        });
         await sleep(170); if(!alive(id)) return;
         parts.forEach(p=>{
           const cell = p.pm.querySelectorAll('.cell')[c];
@@ -833,6 +878,7 @@ P2.push({
       }
       parts.forEach(p=>{
         p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
+        p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
         p.bx.classList.remove('active');
       });
       await sleep(500); if(!alive(id)) return;
