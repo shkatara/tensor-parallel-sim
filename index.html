@@ -437,27 +437,35 @@ const ghostCell = ()=>{ const g=el('div','cell small','⋯'); g.style.cssText+='
 function embTable(){
   const fill = id => Array.from({length:8},(_,c)=>((id*7 + c*13) % 9) - 4);
   const spec = [
-    {id:0, v:fill(0)}, {id:1, v:fill(1)}, {gap:1},
-    {id:785, v:E[0], tok:TOKS[0].t}, {gap:1},
-    {id:4415, v:E[1], tok:TOKS[1].t}, {gap:1},
-    {id:7139, v:E[2], tok:TOKS[2].t}, {gap:1},
-    {id:151935, v:fill(151935)}
+    {id:0, v:fill(0), tok:'"!"'}, {id:1, v:fill(1), tok:'"and"'}, {gap:1},
+    {id:785, v:E[0], tok:TOKS[0].t, prompt:1}, {gap:1},
+    {id:4415, v:E[1], tok:TOKS[1].t, prompt:1}, {gap:1},
+    {id:7139, v:E[2], tok:TOKS[2].t, prompt:1}, {gap:1},
+    {id:151935, v:fill(151935), tok:'"▁zebra"'}
   ];
   const box = el('div'); box.style.cssText='display:flex;flex-direction:column;gap:3px;align-items:flex-start;';
+  // header: token axis (down) vs hidden-dimension axis (across)
+  const head = el('div'); head.style.cssText='display:flex;align-items:center;gap:8px;padding:1px 4px;';
+  const hl = el('div','caption','token ↓ · id'); hl.style.cssText+=';min-width:120px;text-align:right;';
+  head.appendChild(hl);
+  const dims = el('div'); dims.style.cssText='display:flex;gap:2px;align-items:center;';
+  for(let d=1;d<=8;d++){ const h=el('div','caption','d'+d); h.style.cssText+=';width:24px;text-align:center;'; dims.appendChild(h); }
+  const hg = el('div','caption','⋯ d4096'); hg.style.cssText+=';width:52px;text-align:center;';
+  dims.appendChild(hg);
+  head.appendChild(dims);
+  box.appendChild(head);
   const rowEls = {};
   spec.forEach(s=>{
     if(s.gap){ const g=el('div','caption','⋮'); g.style.cssText+=';width:100%;text-align:center;'; box.appendChild(g); return; }
     const r = el('div'); r.style.cssText='display:flex;align-items:center;gap:8px;border-radius:6px;padding:1px 4px;';
-    const lbl = el('div','caption','row '+s.id.toLocaleString('en-US')); lbl.style.cssText+=';min-width:82px;text-align:right;';
-    r.appendChild(lbl);
+    const tokl = el('div','caption', s.tok+' · '+s.id.toLocaleString('en-US')); tokl.style.cssText+=';min-width:120px;text-align:right;';
+    r.appendChild(tokl);
     const m = mtx([s.v],{small:true});
     const wrap = el('div'); wrap.style.cssText='display:flex;align-items:center;gap:2px;';
     wrap.appendChild(m); wrap.appendChild(ghostCell());
     r.appendChild(wrap);
-    const tokl = el('div','caption',''); tokl.style.minWidth='46px';
-    r.appendChild(tokl);
     box.appendChild(r);
-    if(s.tok) rowEls[s.id] = {r, m, tokl, tok:s.tok};
+    if(s.prompt) rowEls[s.id] = {r, m, tokl, tok:s.tok};
   });
   return {box, rowEls};
 }
@@ -466,7 +474,8 @@ P2.push({
   title:'Before any input: the embedding table — 151,936 rows × 4096 columns',
   text:`<h2>One table, fixed at design time</h2>
     <p>Every transformer fixes two numbers up front: a <b>vocab size</b> — how many distinct token types its tokenizer knows — and a <b>hidden size</b> — the width of every vector inside the model. The embedding table is always <code>vocab_size × hidden_size</code>. For Qwen3-235B-A22B, straight from config.json: <b>151,936 × 4096</b>.</p>
-    <p>One row per token type; every row is 4096 learned numbers (8 drawn — the dashed <b>⋯</b> marks the 4,088 we skip). It's an ordinary weight matrix, loaded onto the GPUs with everything else: 151,936 × 4096 × 2 bytes ≈ <b>1.2 GB</b> of the ~470 GB.</p>
+    <p><b>Read the axes carefully:</b> tokens run <i>downward</i> — 151,936 rows, one per token type — and the 4096 hidden dimensions run <i>across</i> (d1…d8 drawn, dashed <b>⋯</b> for the rest). "vocab × hidden" names rows first, columns second; a token's embedding is one full <b>row</b>. (Token strings and IDs shown are illustrative.)</p>
+    <p>It's an ordinary learned weight matrix, loaded onto the GPUs with everything else: 151,936 × 4096 × 2 bytes ≈ <b>1.2 GB</b> of the ~470 GB.</p>
     <p><b>No text has arrived yet.</b> The table just sits in memory, one row waiting for every possible token. Next step: a prompt shows up and we go find its rows.</p>`,
   setup(body){
     const col = el('div','col');
@@ -531,7 +540,7 @@ P2.push({
         const re = rowEls[TOKS[t].id];
         re.r.style.outline='1px solid var(--accent)';
         re.m.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
-        re.tokl.textContent = re.tok; re.tokl.style.color='#fff';
+        re.tokl.style.color='#fff';
         await sleep(500); if(!alive(id)) return;
         xm.querySelectorAll('.cell').forEach(c=>{
           if(+c.dataset.r===t){ c.textContent = E[t][+c.dataset.c]; c.classList.add('flash'); c.style.background='#14304d'; c.style.color='#fff'; }
