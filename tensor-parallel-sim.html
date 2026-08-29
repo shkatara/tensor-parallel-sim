@@ -6,8 +6,8 @@
 <title>Tensor Parallelism — Qwen3-235B-A22B on 4 GPUs</title>
 <style>
   :root{
-    --bg:#0b1220; --panel:#111a2e; --panel2:#0e1526; --line:#1f2c4a;
-    --text:#dbe4f5; --dim:#7e8db0; --accent:#60a5fa;
+    --bg:#000000; --panel:#0f0f13; --panel2:#0a0a0d; --line:#26262c;
+    --text:#e4e4e7; --dim:#8f8f98; --accent:#60a5fa;
     --g0:#22d3ee; --g1:#fbbf24; --g2:#f472b6; --g3:#4ade80;
     --ok:#4ade80; --warn:#f87171;
   }
@@ -20,7 +20,7 @@
   header h1 span{color:var(--dim); font-weight:400;}
   .tabs{display:flex; gap:8px; margin-left:auto;}
   .tab{padding:7px 16px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--dim); cursor:pointer; font-size:12.5px; font-family:inherit;}
-  .tab.active{color:var(--text); border-color:var(--accent); background:#14213c;}
+  .tab.active{color:var(--text); border-color:var(--accent); background:#18181d;}
   main{flex:1; display:flex; gap:0; overflow:hidden;}
   #stage{flex:1; padding:22px; overflow:auto; display:flex; flex-direction:column; align-items:center;}
   #stageInner{width:100%; max-width:1060px;}
@@ -47,7 +47,7 @@
   .col{display:flex; flex-direction:column; gap:10px; align-items:center;}
   .caption{font-size:11.5px; color:var(--dim); text-align:center;}
   .mtx{display:inline-grid; gap:2px; background:transparent;}
-  .cell{width:30px; height:30px; display:flex; align-items:center; justify-content:center; font-size:11px; border-radius:4px; background:#1a2540; color:#c6d3ee; transition:all .45s ease; position:relative;}
+  .cell{width:30px; height:30px; display:flex; align-items:center; justify-content:center; font-size:11px; border-radius:4px; background:#1b1b21; color:#c9c9d1; transition:all .45s ease; position:relative;}
   .cell.small{width:24px; height:24px; font-size:10px;}
   .cell.hl{outline:2px solid #fff; z-index:2;}
   .cell.dimmed{opacity:.25;}
@@ -55,9 +55,9 @@
   .gpuBox .gname{font-size:12px; margin-bottom:8px; display:flex; align-items:center; gap:6px;}
   .gpuBox .gname::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--gc);}
   .gpuBox.active{border-color:var(--gc); box-shadow:0 0 12px -4px var(--gc);}
-  .membar{height:10px; border-radius:5px; background:#1a2540; overflow:hidden; margin-top:6px;}
+  .membar{height:10px; border-radius:5px; background:#1b1b21; overflow:hidden; margin-top:6px;}
   .membar > div{height:100%; width:0%; background:var(--gc,#60a5fa); transition:width 1.2s ease;}
-  .tag{display:inline-block; padding:2px 8px; border-radius:5px; font-size:10.5px; background:#1a2540; color:var(--dim);}
+  .tag{display:inline-block; padding:2px 8px; border-radius:5px; font-size:10.5px; background:#1b1b21; color:var(--dim);}
   .flash{animation:flash .7s ease;}
   @keyframes flash{0%{background:#fff; color:#000;} 100%{}}
   .fadeIn{animation:fadeIn .5s ease both;}
@@ -68,11 +68,11 @@
   .counter{font-size:11px; color:var(--dim);}
   .counter b{color:#fff; font-size:13px;}
   .tbarWrap{width:100%; max-width:560px;}
-  .tbar{height:14px; border-radius:7px; background:#1a2540; overflow:hidden;}
+  .tbar{height:14px; border-radius:7px; background:#1b1b21; overflow:hidden;}
   .tbar > div{height:100%; width:0%; background:var(--accent);}
   .layerBar{height:22px; border-radius:4px; display:flex; overflow:hidden; width:230px;}
   .layerBar div{flex:1;}
-  .chip{padding:6px 12px; border-radius:8px; background:#1a2540; border:1px solid var(--line); font-size:12.5px;}
+  .chip{padding:6px 12px; border-radius:8px; background:#1b1b21; border:1px solid var(--line); font-size:12.5px;}
   .plus{font-size:16px; color:var(--dim); text-align:center;}
   .sumline{border-top:2px solid var(--dim); margin:4px 0;}
   .bigNote{border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:14px 18px; font-size:12.5px; color:var(--dim); max-width:720px; margin:16px auto 0; line-height:1.6;}
@@ -81,7 +81,7 @@
   .modelCard h3{font-size:15px; margin-bottom:12px; color:#fff;}
   .specGrid{display:grid; grid-template-columns:1fr 1fr; gap:8px 24px; font-size:12.5px;}
   .specGrid .k{color:var(--dim);}
-  .raceTrack{display:flex; height:26px; border-radius:6px; overflow:hidden; background:#1a2540; position:relative;}
+  .raceTrack{display:flex; height:26px; border-radius:6px; overflow:hidden; background:#1b1b21; position:relative;}
   .raceFill{height:100%; width:0%; }
   .raceLbl{position:absolute; right:8px; top:4px; font-size:11px; color:#fff;}
   .tokOut{font-size:13px; padding:5px 12px; border-radius:8px; background:var(--ok); color:#052e12; font-weight:700; opacity:0; transition:opacity .4s;}
@@ -539,11 +539,11 @@ P2.push({
         await sleep(350); if(!alive(id)) return;
         const re = rowEls[TOKS[t].id];
         re.r.style.outline='1px solid var(--accent)';
-        re.m.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
+        re.m.querySelectorAll('.cell').forEach(c=>{ c.style.background='#2c2c35'; c.style.color='#fff'; });
         re.tokl.style.color='#fff';
         await sleep(500); if(!alive(id)) return;
         xm.querySelectorAll('.cell').forEach(c=>{
-          if(+c.dataset.r===t){ c.textContent = E[t][+c.dataset.c]; c.classList.add('flash'); c.style.background='#14304d'; c.style.color='#fff'; }
+          if(+c.dataset.r===t){ c.textContent = E[t][+c.dataset.c]; c.classList.add('flash'); c.style.background='#2c2c35'; c.style.color='#fff'; }
         });
         await sleep(400);
       }
@@ -564,7 +564,7 @@ P2.push({
     const row = el('div','row');
     const colL = el('div','col');
     const xm = mtx(E, {small:true});
-    xm.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
+    xm.querySelectorAll('.cell').forEach(c=>{ c.style.background='#2c2c35'; c.style.color='#fff'; });
     colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8, really 3×4096) — one row<br>per token, all rows multiply W together'));
     row.appendChild(colL);
     row.appendChild(el('div','eq','·'));
@@ -592,7 +592,7 @@ P2.push({
         for(let t=0;t<3;t++){
           const ycell = ym.querySelectorAll('.cell')[t*8+c];
           ycell.textContent = YM[t][c]; ycell.classList.add('flash');
-          ycell.style.background='#14304d'; ycell.style.color='#fff';
+          ycell.style.background='#2c2c35'; ycell.style.color='#fff';
         }
         cnt.innerHTML = `multiply-adds: <b>${(c+1)*24}</b> / 192 (64 per token row)`;
         tf.style.transition='width .35s linear'; tf.style.width = ((c+1)*12.5)+'%';
@@ -612,7 +612,7 @@ P2.push({
   setup(body, id){
     const bc = el('div','col');
     const bx = mtx(E,{small:true});
-    bx.querySelectorAll('.cell').forEach(c=>{ c.style.background='#14304d'; c.style.color='#fff'; });
+    bx.querySelectorAll('.cell').forEach(c=>{ c.style.background='#2c2c35'; c.style.color='#fff'; });
     bc.appendChild(bx);
     bc.appendChild(el('div','caption','the FULL 3×8 block — every token — is broadcast to all 4 GPUs ↓'));
     body.appendChild(bc);
@@ -742,7 +742,7 @@ P2.push({
       }
       await sleep(400); if(!alive(id)) return;
       sum.querySelectorAll('.cell').forEach((cell,c)=>{
-        cell.textContent = Y[c]; cell.style.background='#14304d'; cell.style.color='#fff'; cell.classList.add('flash');
+        cell.textContent = Y[c]; cell.style.background='#2c2c35'; cell.style.color='#fff'; cell.classList.add('flash');
       });
       check.innerHTML = `same Y again <span class="okmark">✓</span> — [${Y.join(' ')}] · four shard-matmuls ≡ one big matmul`;
     })();
