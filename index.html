@@ -1709,55 +1709,74 @@ P2.push({
 
 /* ---- 2.8 Attention & MLP halves ---- */
 P2.push({
-  title:'Inside One Layer: Attention & MLP (Two Halves, Two Syncs)',
-  text:`<h2>Attention and MLP: Why both cuts are needed</h2>
-    <p>Every transformer layer has two distinct sub-blocks:</p>
-    <p>1. <b>Attention Block:</b> Tokens look at and communicate with each other.<br>
-       • <b>First Math (Column Cut):</b> Slices <code>W_Q, W_K, W_V</code> into attention heads across the 4 GPUs.<br>
-       • <b>Second Math (Row Cut):</b> Slices <code>W_O</code> (Output Projection) to consume those local heads.<br>
-       • <b>Sync:</b> 1 AllReduce sum.</p>
-    <p>2. <b>MLP Block:</b> Tokens process facts and features individually.<br>
-       • <b>First Math (Column Cut):</b> Slices <code>W_up</code> to expand vector width (4096 -> 14,336).<br>
-       • <b>Second Math (Row Cut):</b> Slices <code>W_down</code> to compress vector width (14,336 -> 4096).<br>
-       • <b>Sync:</b> 1 AllReduce sum.</p>
-    <div class="key"><b>The Grand Total:</b> Exactly <b>2 AllReduces per layer</b> (one for Attention, one for MLP). Inside each sub-block, data stays inside local GPU chip memory with zero network latency.</div>`,
+  title:'Inside One Layer: Attention & MLP (Multi-Layer Perceptron)',
+  text:`<h2>How a full layer executes on 4 GPUs</h2>
+    <p>Every single transformer layer contains two distinct engines working in sequence:</p>
+    <p>1. <b>Self-Attention Engine (Communication):</b> Tokens look at surrounding tokens to understand grammatical context.</p>
+    <p>2. <b>MLP Engine (Multi-Layer Perceptron / Memory):</b> Tokens access factual memory (world facts, programming syntax, definitions) individually.</p>
+    <div class="key"><b>Why Column Cut pairs directly into Row Cut:</b><br>
+      • Inside each engine, the first math is a <b>Column Cut</b> and the second math is a <b>Row Cut</b>.<br>
+      • Because the Column Cut output directly feeds the Row Cut input inside local GPU cache, the intermediate vectors <b>never touch the network wires</b>.<br>
+      • <b>The Grand Total:</b> Exactly <b>2 AllReduce network syncs per layer</b> (one after Attention, one after MLP). Everything else runs at full on-chip speed (~3.35 TB/s).</div>`,
   setup(body, id){
     const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='880px';
 
-    const status = el('div','statusBadge','1. Attention Block: 4 GPUs compute QKV heads locally');
+    const status = el('div','statusBadge','1. Attention Engine: 4 GPUs compute attention heads in local memory');
     flowWrap.appendChild(status);
 
-    const blocksRow = el('div','row'); blocksRow.style.gap='18px'; blocksRow.style.width='100%';
+    // Stage 1: Attention Engine
+    const attBox = el('div','col'); attBox.style.cssText='width:100%;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    attBox.appendChild(el('div','caption','<b>Engine 1: Self-Attention (Words talk to each other)</b>'));
+    const attGpuRow = el('div','row'); attGpuRow.style.gap='8px';
+    const attGpuCards = [];
+    for(let g=0;g<4;g++){
+      const inner = el('div','col'); inner.style.gap='4px';
+      const c1 = el('div','chip',`W_Q,K,V <small style="opacity:.8">(Col Cut)</small>`);
+      const arrow = el('div','caption','↓ on-chip RAM (0 delay) ↓');
+      const c2 = el('div','chip',`W_O <small style="opacity:.8">(Row Cut)</small>`);
+      inner.appendChild(c1); inner.appendChild(arrow); inner.appendChild(c2);
+      const bx = gpuBox(g, inner);
+      attGpuRow.appendChild(bx);
+      attGpuCards.push({bx, c1, c2, arrow});
+    }
+    attBox.appendChild(attGpuRow);
+    const attSyncTag = el('div','tag','Sync #1: AllReduce across NVLink cables (produces attention output vector)');
+    attSyncTag.style.cssText += ';margin-top:6px;font-weight:700;padding:5px 12px;transition:all .3s;';
+    attBox.appendChild(attSyncTag);
+    flowWrap.appendChild(attBox);
 
-    // Attention sub-block visual
-    const attCol = el('div','col'); attCol.style.flex='1'; attCol.style.minWidth='280px';
-    attCol.appendChild(el('div','caption','<b>Part 1: Attention Sub-Block</b> (tokens talk to each other)'));
-    const attFrame = el('div','col'); attFrame.style.cssText='border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);width:100%;gap:8px;';
-    const attC1 = el('div','chip','1. Col Cut (W_Q, W_K, W_V)<br><small style="color:var(--dim)">computes attention heads</small>');
-    const attConn = el('div','tag','↓ local on-chip RAM (0 network delay) ↓');
-    const attC2 = el('div','chip','2. Row Cut (W_O Output Projection)<br><small style="color:var(--dim)">combines heads locally</small>');
-    const attSync = el('div','tag','Sync #1: AllReduce across NVLink');
-    attSync.style.cssText+=';font-weight:700;padding:4px 10px;margin-top:4px;';
-    attFrame.appendChild(attC1); attFrame.appendChild(attConn); attFrame.appendChild(attC2); attFrame.appendChild(attSync);
-    attCol.appendChild(attFrame);
-    blocksRow.appendChild(attCol);
+    // Arrow from Attention to MLP
+    const flowArrow = el('div','col'); flowArrow.style.alignItems='center'; flowArrow.style.margin='-4px 0';
+    const flowTag = el('div','caption','↓↓ Attention output vector flows directly into MLP Engine ↓↓');
+    flowArrow.appendChild(flowTag);
+    flowWrap.appendChild(flowArrow);
 
-    // MLP sub-block visual
-    const mlpCol = el('div','col'); mlpCol.style.flex='1'; mlpCol.style.minWidth='280px';
-    mlpCol.appendChild(el('div','caption','<b>Part 2: MLP Sub-Block</b> (tokens process knowledge)'));
-    const mlpFrame = el('div','col'); mlpFrame.style.cssText='border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);width:100%;gap:8px;';
-    const mlpC1 = el('div','chip','1. Col Cut (W_up)<br><small style="color:var(--dim)">expands width: 4096 -> 14,336</small>');
-    const mlpConn = el('div','tag','↓ local on-chip RAM (0 network delay) ↓');
-    const mlpC2 = el('div','chip','2. Row Cut (W_down)<br><small style="color:var(--dim)">compresses width: 14,336 -> 4096</small>');
-    const mlpSync = el('div','tag','Sync #2: AllReduce across NVLink');
-    mlpSync.style.cssText+=';font-weight:700;padding:4px 10px;margin-top:4px;';
-    mlpFrame.appendChild(mlpC1); mlpFrame.appendChild(mlpConn); mlpFrame.appendChild(mlpC2); mlpFrame.appendChild(mlpSync);
-    mlpCol.appendChild(mlpFrame);
-    blocksRow.appendChild(mlpCol);
+    // Stage 2: MLP Engine (Multi-Layer Perceptron)
+    const mlpBox = el('div','col'); mlpBox.style.cssText='width:100%;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    mlpBox.appendChild(el('div','caption','<b>Engine 2: MLP (Multi-Layer Perceptron / Factual Memory)</b>'));
+    const mlpGpuRow = el('div','row'); mlpGpuRow.style.gap='8px';
+    const mlpGpuCards = [];
+    for(let g=0;g<4;g++){
+      const inner = el('div','col'); inner.style.gap='4px';
+      const c1 = el('div','chip',`W_up <small style="opacity:.8">(4096->3584)</small>`);
+      const arrow = el('div','caption','↓ SwiGLU filter ↓');
+      const c2 = el('div','chip',`W_down <small style="opacity:.8">(3584->4096)</small>`);
+      inner.appendChild(c1); inner.appendChild(arrow); inner.appendChild(c2);
+      const bx = gpuBox(g, inner);
+      mlpGpuRow.appendChild(bx);
+      mlpGpuCards.push({bx, c1, c2, arrow});
+    }
+    mlpBox.appendChild(mlpGpuRow);
+    const mlpSyncTag = el('div','tag','Sync #2: AllReduce across NVLink cables (produces final layer output vector)');
+    mlpSyncTag.style.cssText += ';margin-top:6px;font-weight:700;padding:5px 12px;transition:all .3s;';
+    mlpBox.appendChild(mlpSyncTag);
+    flowWrap.appendChild(mlpBox);
 
-    flowWrap.appendChild(blocksRow);
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    flowWrap.appendChild(check);
 
-    const foot = el('div','bigNote','<b>Summary per layer:</b> 4 matrix multiplications on 4 GPUs, but only <b>2 AllReduce network syncs</b>. Everything else runs at full on-chip speed.');
+    const foot = el('div','bigNote','<b>Summary:</b> 4 massive matrix multiplications computed on 4 GPUs with <b>only 2 AllReduce network syncs per layer</b>. Ready to proceed to Layer 2.');
     flowWrap.appendChild(foot);
     body.appendChild(flowWrap);
 
@@ -1769,43 +1788,51 @@ P2.push({
           name: '1. Attention Math',
           delay: 1300,
           run: async () => {
-            status.textContent = '1. Attention Block: 4 GPUs compute attention heads in local memory';
+            status.textContent = '1. Attention Engine: 4 GPUs compute attention heads in local on-chip memory';
             status.classList.add('active');
-            attC1.style.borderColor='var(--accent)'; attC1.style.color='var(--accent)'; attC1.classList.add('flash');
-            attConn.style.background='var(--okWash)'; attConn.style.color='var(--ok)'; attConn.style.borderColor='var(--ok)';
-            attC2.style.borderColor='var(--accent)'; attC2.style.color='var(--accent)'; attC2.classList.add('flash');
-            attSync.style.background=''; attSync.style.color=''; attSync.style.borderColor='';
-            mlpC1.style.borderColor=''; mlpC1.style.color='';
-            mlpConn.style.background=''; mlpConn.style.color=''; mlpConn.style.borderColor='';
-            mlpC2.style.borderColor=''; mlpC2.style.color='';
-            mlpSync.style.background=''; mlpSync.style.color=''; mlpSync.style.borderColor='';
+            attGpuCards.forEach(c => {
+              c.bx.classList.add('active');
+              c.c1.style.borderColor='var(--accent)'; c.c1.style.color='var(--accent)';
+              c.c2.style.borderColor='var(--accent)'; c.c2.style.color='var(--accent)';
+            });
+            attSyncTag.style.background=''; attSyncTag.style.color=''; attSyncTag.style.borderColor='';
+            mlpBox.style.opacity='0.45';
+            mlpGpuCards.forEach(c => c.bx.classList.remove('active'));
+            mlpSyncTag.style.background=''; mlpSyncTag.style.color=''; mlpSyncTag.style.borderColor='';
+            check.innerHTML = '';
           }
         },
         {
-          name: '2. Attention Sync',
-          delay: 1300,
+          name: '2. Attention Sync #1',
+          delay: 1400,
           run: async () => {
-            status.textContent = '2. Attention Sync: All 4 GPUs perform AllReduce #1 over NVLink';
-            attSync.style.background=INK; attSync.style.color=ONINK; attSync.style.borderColor=INK; attSync.classList.add('flash');
+            status.textContent = '2. Attention Sync: 4 GPUs exchange partial sums over NVLink (Sync Point #1)';
+            attSyncTag.style.background=INK; attSyncTag.style.color=ONINK; attSyncTag.style.borderColor=INK;
+            attSyncTag.classList.add('flash');
           }
         },
         {
           name: '3. MLP Math',
           delay: 1300,
           run: async () => {
-            status.textContent = '3. MLP Block: 4 GPUs expand & compress vectors in local memory';
-            mlpC1.style.borderColor='var(--accent)'; mlpC1.style.color='var(--accent)'; mlpC1.classList.add('flash');
-            mlpConn.style.background='var(--okWash)'; mlpConn.style.color='var(--ok)'; mlpConn.style.borderColor='var(--ok)';
-            mlpC2.style.borderColor='var(--accent)'; mlpC2.style.color='var(--accent)'; mlpC2.classList.add('flash');
+            status.textContent = '3. MLP (Multi-Layer Perceptron): 4 GPUs expand & compress knowledge in local cache';
+            mlpBox.style.opacity='1';
+            mlpGpuCards.forEach(c => {
+              c.bx.classList.add('active');
+              c.c1.style.borderColor='var(--accent)'; c.c1.style.color='var(--accent)';
+              c.c2.style.borderColor='var(--accent)'; c.c2.style.color='var(--accent)';
+            });
+            attGpuCards.forEach(c => c.bx.classList.remove('active'));
           }
         },
         {
-          name: '4. MLP Sync',
+          name: '4. MLP Sync #2',
           delay: 1400,
           run: async () => {
-            status.textContent = '4. MLP Sync: All 4 GPUs perform AllReduce #2 over NVLink';
-            mlpSync.style.background=INK; mlpSync.style.color=ONINK; mlpSync.style.borderColor=INK; mlpSync.classList.add('flash');
-            status.textContent = 'Complete: 1 Full Layer done with exactly 2 AllReduce syncs';
+            status.textContent = '4. MLP Sync: 4 GPUs exchange partial sums over NVLink (Sync Point #2)';
+            mlpSyncTag.style.background=INK; mlpSyncTag.style.color=ONINK; mlpSyncTag.style.borderColor=INK;
+            mlpSyncTag.classList.add('flash');
+            check.innerHTML = `Layer complete: 4 matrix multiplications computed on 4 GPUs with exactly 2 AllReduce syncs <span class="okmark">✓</span>`;
             status.classList.remove('active');
           }
         }
