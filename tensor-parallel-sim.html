@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Tensor Parallelism — Qwen3-235B-A22B on 4 GPUs</title>
+<title>Tensor Parallelism: Qwen3-235B-A22B on 4 GPUs</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -223,13 +223,13 @@ const X = [1, 2, 0, 1, 2, 1, 1, 0];
 const W = Array.from({length:8},(_,r)=>Array.from({length:8},(_,c)=>((r*3 + c*5) % 7) - 3));
 // full result Y = X · W   (Y[c] = Σ_r X[r]·W[r][c])
 const Y = Array.from({length:8},(_,c)=>X.reduce((s,x,r)=>s + x*W[r][c],0));
-// column shards: GPU i owns columns 2i, 2i+1  → produces Y[2i], Y[2i+1] exactly
-// row shards: GPU i owns rows 2i, 2i+1 and X-slice [2i,2i+1] → produces a PARTIAL 1x8
+// column shards: GPU i owns columns 2i, 2i+1 -> produces Y[2i], Y[2i+1] exactly
+// row shards: GPU i owns rows 2i, 2i+1 and X-slice [2i,2i+1] -> produces a PARTIAL 1x8
 const rowPartial = Array.from({length:4},(_,g)=>
   Array.from({length:8},(_,c)=> X[2*g]*W[2*g][c] + X[2*g+1]*W[2*g+1][c]));
 // full prefill input: one embedding row per prompt token ("The", "cat", "sat")
 const E = [X, [2,0,1,1,0,2,1,1], [0,1,2,0,1,1,2,0]];
-// full prefill output: (3x8)·(8x8) = 3x8 — three independent row·W products
+// full prefill output: (3x8)·(8x8) = 3x8: three independent row·W products
 const YM = E.map(x => Array.from({length:8},(_,c)=>x.reduce((s,v,r)=>s + v*W[r][c],0)));
 
 let runId = 0;                      // cancels in-flight animations on step change
@@ -299,7 +299,7 @@ document.getElementById('tab2').onclick = ()=>{state.part=2; state.step=0; rende
 
 /* ================= theme toggle ================= */
 const themeBtn = document.getElementById('themeBtn');
-/* mirrored half-tone glyphs — monochrome everywhere, unlike ☀/☾ which some platforms force to emoji */
+/* mirrored half-tone glyphs: monochrome everywhere, unlike ☀/☾ which some platforms force to emoji */
 function showTheme(){
   const dark = document.documentElement.dataset.theme==='dark';
   themeBtn.textContent = dark ? '◐' : '◑';
@@ -318,11 +318,11 @@ const P1 = [];
 
 /* ---- 1.1 the model ---- */
 P1.push({
-  title:'The model: Qwen3-235B-A22B — too big for one GPU',
+  title:'The model: Qwen3-235B-A22B (too big for one GPU)',
   text:`<h2>Why split at all?</h2>
-    <p><b>235B parameters.</b> In BF16 (2 bytes each) that is ~<b>470 GB of weights</b> — an H100 has 80 GB. The model physically cannot live on one GPU.</p>
-    <p>So we take <b>4 GPUs</b> and give each one a piece. The whole question of this simulation: <b>which piece?</b></p>
-    <div class="note"><b>Mental Model First:</b> Think of this as a standard dense transformer. We use Qwen's numbers because it's a real model that won't fit on one card. <i>(In real production, Qwen is MoE with 22B active parameters per token where experts can be placed across GPUs; but whether dense or MoE, the core problem is identical: how to slice weight matrices across GPUs and multiply them without communication bottlenecks.)</i></div>`,
+    <p><b>235B parameters.</b> In BF16 (2 bytes each), that is ~<b>470 GB of weights</b>. An H100 GPU has 80 GB. The model physically cannot live on one GPU.</p>
+    <p>So we take <b>4 GPUs</b> and give each one a piece. The core question: <b>which piece?</b></p>
+    <div class="note"><b>Mental Model First:</b> Think of this as a standard dense transformer. We use Qwen's numbers because it is a real model that cannot fit on one card. (Production setups use Mixture-of-Experts, but weight matrix splitting follows the exact same logic.)</div>`,
   setup(body){
     const card = el('div','modelCard fadeIn');
     card.appendChild(el('h3','','Qwen3-235B-A22B'));
@@ -336,23 +336,23 @@ P1.push({
     const row = el('div','row'); row.style.marginTop='26px';
     for(let i=0;i<4;i++){
       const inner = el('div');
-      inner.appendChild(el('div','caption','80–141 GB memory'));
+      inner.appendChild(el('div','caption','80-141 GB memory'));
       const mb = el('div','membar'); mb.appendChild(el('div'));
       inner.appendChild(mb);
       row.appendChild(gpuBox(i, inner));
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','470 GB of weights, 4 empty GPUs. <b>How do we cut the model?</b> There are two very different answers → next step.'));
+    body.appendChild(el('div','bigNote','470 GB of weights, 4 empty GPUs. <b>How do we cut the model?</b> There are two very different answers -> next step.'));
   }
 });
 
 /* ---- 1.2 wrong mental model: pipeline ---- */
 P1.push({
-  title:'Cut #1 — whole layers per GPU (pipeline parallelism). NOT what we want.',
-  text:`<h2>The intuitive (wrong-for-us) cut</h2>
-    <p>The obvious idea: 94 layers, 4 GPUs → GPU 0 takes layers 1–24, GPU 1 takes 25–47, and so on. This exists — it's called <b>pipeline parallelism</b>.</p>
-    <p>But watch the animation: while your prompt is inside GPU 0's layers, <b>GPUs 1–3 sit idle</b>. For a single request, every layer is still computed at <i>full size</i> by <i>one</i> GPU. Time-to-first-token barely improves.</p>
-    <div class="key"><b>Your instinct was right:</b> we do NOT divide layers across GPUs. We divide <b>the weights inside every layer</b>. That's the next step.</div>`,
+  title:'Cut #1: Whole layers per GPU (Pipeline Parallelism). NOT what we want.',
+  text:`<h2>The intuitive (wrong for us) cut</h2>
+    <p>The obvious idea: 94 layers, 4 GPUs. Give GPU 0 layers 1-24, GPU 1 layers 25-47, and so on. This exists: it is called <b>pipeline parallelism</b>.</p>
+    <p>Watch the animation: while your prompt is inside GPU 0's layers, <b>GPUs 1-3 sit idle</b>. For a single request, every layer is still computed at <i>full size</i> by <i>one</i> GPU at a time.</p>
+    <div class="key"><b>The lesson:</b> To speed up a single prompt, we do NOT divide layers across GPUs. We divide <b>the weights inside every layer</b>. That is the next step.</div>`,
   setup(body, id){
     const row = el('div','row');
     const boxes=[];
@@ -364,14 +364,14 @@ P1.push({
         stack.appendChild(bar);
       }
       inner.appendChild(stack);
-      inner.appendChild(el('div','caption',`layers ${g*24+1}–${Math.min((g+1)*24,94)}<br>(full weights)`));
+      inner.appendChild(el('div','caption',`layers ${g*24+1}-${Math.min((g+1)*24,94)}<br>(full weights)`));
       const st = el('div','tag','idle'); inner.appendChild(st);
       const b = gpuBox(g, inner); boxes.push({b, st});
       row.appendChild(b);
       if(g<3) row.appendChild(el('div','arrow','→'));
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','A prompt travels <b>left to right</b>. Only one GPU works at a time on this request — the others wait. 4 GPUs, ~1 GPU of speed for your token.'));
+    body.appendChild(el('div','bigNote','A prompt travels <b>left to right</b>. Only one GPU works at a time on this request: the others wait. 4 GPUs, ~1 GPU of speed for your token.'));
     (async()=>{
       while(alive(id)){
         for(let g=0; g<4 && alive(id); g++){
@@ -392,12 +392,12 @@ P1.push({
 
 /* ---- 1.3 right mental model: tensor parallel ---- */
 P1.push({
-  title:'Cut #2 — every layer sliced across ALL GPUs (tensor parallelism)',
+  title:'Cut #2: Slicing every layer across ALL GPUs (Tensor Parallelism)',
   text:`<h2>The cut we actually use</h2>
-    <p>Each of the 94 layers is <b>split four ways</b>. Every GPU holds a slice of layer 1, a slice of layer 2 … a slice of layer 94.</p>
+    <p>Each of the 94 layers is <b>split four ways</b>. Every GPU holds a slice of layer 1, a slice of layer 2, through a slice of layer 94.</p>
     <p>No GPU has any complete layer. Every GPU has a piece of <i>every</i> layer.</p>
     <p>Consequence: when the prompt hits layer 1, <b>all four GPUs work on layer 1 at the same time</b>. Then all four work on layer 2. No one idles.</p>
-    <div class="key">Each layer bar here is one transformer layer; the four colors are the four GPUs' slices of it.</div>`,
+    <div class="key">Each layer bar here is one transformer layer: the four colors are the four GPUs' slices of it.</div>`,
   setup(body, id){
     const col = el('div','col');
     const stack = el('div'); stack.style.cssText='display:flex;flex-direction:column;gap:4px;align-items:center;';
@@ -408,32 +408,31 @@ P1.push({
       stack.appendChild(bar); barEls.push(bar);
       if(l===7){ stack.appendChild(el('div','caption','⋮  (94 layers total)')); }
     }
-    col.appendChild(el('div','caption','the model — every layer split 4 ways'));
+    col.appendChild(el('div','caption','the model: every layer split 4 ways'));
     col.appendChild(stack);
     body.appendChild(col);
     const row = el('div','row'); row.style.marginTop='24px';
     for(let g=0;g<4;g++){
       const inner = el('div');
-      inner.appendChild(el('div','caption',`¼ of layer 1<br>¼ of layer 2<br>⋮<br>¼ of layer 94`));
+      inner.appendChild(el('div','caption',`1/4 of layer 1<br>1/4 of layer 2<br>⋮<br>1/4 of layer 94`));
       const mb = el('div','membar'); const fill = el('div'); mb.appendChild(fill); inner.appendChild(mb);
       inner.appendChild(el('div','caption','~118 GB / GPU'));
       row.appendChild(gpuBox(g, inner));
       setTimeout(()=>{ if(alive(id)) fill.style.width='83%'; }, 300);
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','470 GB ÷ 4 = <b>~118 GB per GPU</b>. (Even that beats 80 GB — real 4-GPU rigs use FP8 on H200 141 GB cards, or quantize. The <i>splitting logic</i> is identical.)'));
+    body.appendChild(el('div','bigNote','470 GB ÷ 4 = <b>~118 GB per GPU</b>. (Real 4-GPU rigs use FP8 on H200 141 GB cards or quantize. The <i>splitting logic</i> is identical.)'));
   }
 });
 
-/* ---- 1.4 the shard (merged with layer contents) ---- */
+/* ---- 1.4 column cut sharding ---- */
 P1.push({
-  title:'What gets sliced: a layer stores a few weight grids — here one becomes 4 shards',
-  text:`<h2>What is actually IN a layer — and in a shard?</h2>
-    <p>Nothing is running yet; we are still <i>loading</i>. What a layer <b>stores</b> is a handful of weight matrices — <code>W_Q, W_K, W_V, W_O</code> (attention) and <code>W_up, W_down</code> (FFN). Each is just <b>a grid of numbers</b>: a 4096×4096 one holds 16.7 million of them. The rest of the layer (norms, softmax, activation) stores ~nothing. <i>What these grids do with an input is Part 2's job — for loading, only their size matters.</i></p>
-    <p>Such grids don't fit on a screen, so one <b>8×8 stand-in</b> represents any of them — with real numbers that stay fixed for the whole simulation.</p>
-    <p>A shard is nothing exotic: <b>a rectangular block of those numbers</b>. Cut by columns: GPU 0 gets columns 0–1, GPU 1 gets 2–3, and so on — an <b>8×2 block</b>, 16 of the 64 numbers, per GPU. The numbers don't change, they just <i>move house</i>; side by side the four blocks would be W again, bit for bit.</p>
-    <div class="note">There is a second cut — <b>by rows</b> — and the difference between the two decides whether the join is a <i>concat</i> or an <i>AllReduce</i>. That's the punchline of Part 2, step 5.</div>
-    <div class="key">This happens to <b>every weight matrix of every one of the 94 layers</b> at model-load time. That IS "loading a model on 4 GPUs".</div>`,
+  title:'Sharding style A: Column Cut (splitting weights vertically into 8x2 blocks)',
+  text:`<h2>Cut W vertically into columns</h2>
+    <p>A layer stores weight matrices (like <code>W_Q, W_K, W_V, W_O, W_up, W_down</code>). Each is a grid of numbers.</p>
+    <p>In a <b>column cut</b>, we slice the matrix vertically into 4 column blocks. On our 8x8 stand-in:</p>
+    <p>GPU 0 gets columns 0-1, GPU 1 gets columns 2-3, GPU 2 gets 4-5, and GPU 3 gets 6-7.</p>
+    <div class="key">Each GPU holds an <b>8x2 shard</b> (16 numbers). Together, the four blocks make up the complete weight matrix.</div>`,
   setup(body, id){
     const top = el('div','col');
     const chips = el('div'); chips.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
@@ -442,25 +441,24 @@ P1.push({
       if(i===0){ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)'; }
       chips.appendChild(c);
     });
-    top.appendChild(el('div','caption','one layer stores these weight grids — every one gets sharded the same way; we demo the first:'));
+    top.appendChild(el('div','caption','one layer stores these weight grids: we demonstrate column sharding on W:'));
     top.appendChild(chips);
-    const wm = mtx(W, {id:'srcW'});
+    const wm = mtx(W, {id:'srcWCol'});
     top.appendChild(el('div','arrow','↓'));
     top.appendChild(wm);
-    top.appendChild(el('div','caption','W (8×8 stand-in) — watch the columns take their GPU color, then fly down'));
+    top.appendChild(el('div','caption','W (8x8 stand-in): watch the columns take GPU colors, then move to GPUs'));
     body.appendChild(top);
     const row = el('div','row'); row.style.marginTop='26px';
     const holders=[];
     for(let g=0;g<4;g++){
       const holder = el('div'); holders.push(holder);
       const bx = gpuBox(g, holder);
-      bx.appendChild(el('div','caption',`shard: 8×2 = 16 numbers<br>(cols ${2*g}–${2*g+1})`));
+      bx.appendChild(el('div','caption',`column shard: 8x2 = 16 numbers<br>(cols ${2*g}-${2*g+1})`));
       row.appendChild(bx);
     }
     body.appendChild(row);
     (async()=>{
       await sleep(600); if(!alive(id)) return;
-      // color the columns
       wm.querySelectorAll('.cell').forEach(cell=>{
         const g = Math.floor(cell.dataset.c/2);
         paint(cell,g);
@@ -468,12 +466,62 @@ P1.push({
       await sleep(1100); if(!alive(id)) return;
       for(let g=0;g<4;g++){
         if(!alive(id)) return;
-        // dim source columns, materialize shard below
         wm.querySelectorAll('.cell').forEach(cell=>{ if(Math.floor(cell.dataset.c/2)===g) cell.classList.add('dimmed'); });
         const shard = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
         const sm = mtx(shard,{colorOf:()=>g, small:true}); sm.classList.add('fadeIn');
         holders[g].appendChild(sm);
-        await sleep(500);
+        await sleep(450);
+      }
+    })();
+  }
+});
+
+/* ---- 1.5 row cut sharding ---- */
+P1.push({
+  title:'Sharding style B: Row Cut (splitting weights horizontally into 2x8 blocks)',
+  text:`<h2>Cut W horizontally into rows</h2>
+    <p>The other way to slice a weight matrix is <b>by rows</b>.</p>
+    <p>In a <b>row cut</b>, we slice the matrix horizontally into 4 row blocks. On our 8x8 stand-in:</p>
+    <p>GPU 0 gets rows 0-1, GPU 1 gets rows 2-3, GPU 2 gets rows 4-5, and GPU 3 gets rows 6-7.</p>
+    <div class="key">Each GPU holds a <b>2x8 shard</b> (16 numbers). Column cut vs Row cut determines whether the output needs <b>AllGather</b> (concatenation) or <b>AllReduce</b> (summation).</div>`,
+  setup(body, id){
+    const top = el('div','col');
+    const chips = el('div'); chips.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
+    ['W_Q','W_K','W_V','W_O','W_up','W_down'].forEach((n,i)=>{
+      const c = el('div','chip',n);
+      if(i===1){ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)'; }
+      chips.appendChild(c);
+    });
+    top.appendChild(el('div','caption','demonstrating row sharding on W:'));
+    top.appendChild(chips);
+    const wm = mtx(W, {id:'srcWRow'});
+    top.appendChild(el('div','arrow','↓'));
+    top.appendChild(wm);
+    top.appendChild(el('div','caption','W (8x8 stand-in): watch the rows take GPU colors, then move to GPUs'));
+    body.appendChild(top);
+    const row = el('div','row'); row.style.marginTop='26px';
+    const holders=[];
+    for(let g=0;g<4;g++){
+      const holder = el('div'); holders.push(holder);
+      const bx = gpuBox(g, holder);
+      bx.appendChild(el('div','caption',`row shard: 2x8 = 16 numbers<br>(rows ${2*g}-${2*g+1})`));
+      row.appendChild(bx);
+    }
+    body.appendChild(row);
+    (async()=>{
+      await sleep(600); if(!alive(id)) return;
+      wm.querySelectorAll('.cell').forEach(cell=>{
+        const g = Math.floor(cell.dataset.r/2);
+        paint(cell,g);
+      });
+      await sleep(1100); if(!alive(id)) return;
+      for(let g=0;g<4;g++){
+        if(!alive(id)) return;
+        wm.querySelectorAll('.cell').forEach(cell=>{ if(Math.floor(cell.dataset.r/2)===g) cell.classList.add('dimmed'); });
+        const shard = [W[2*g], W[2*g+1]];
+        const sm = mtx(shard,{colorOf:()=>g, small:true}); sm.classList.add('fadeIn');
+        holders[g].appendChild(sm);
+        await sleep(450);
       }
     })();
   }
@@ -481,13 +529,13 @@ P1.push({
 
 /* ---- 1.6 recap ---- */
 P1.push({
-  title:'After loading: every GPU = a thin vertical slice of the whole model',
+  title:'After loading: Every GPU holds thin slices of the entire model',
   text:`<h2>Part 1 recap</h2>
-    <p>① The model is 94 layers of weight matrices, ~470 GB — no single GPU can hold it.</p>
-    <p>② We do <b>not</b> deal out whole layers (that's pipeline parallelism, and it leaves GPUs idle).</p>
-    <p>③ Instead, <b>every weight matrix of every layer</b> is cut into blocks. A shard is just a block of the raw weight numbers — our 8×8 became four 8×2 blocks.</p>
-    <p>④ Each GPU ends up with ¼ of layer 1, ¼ of layer 2 … ¼ of layer 94.</p>
-    <p><b>Now the payoff:</b> Part 2 runs a prompt through this and shows why four small matmuls beat one big one — and where AllReduce enters.</p>`,
+    <p>1. The model is 94 layers of weight matrices (~470 GB), too big for a single 80 GB GPU.</p>
+    <p>2. We slice <b>every weight matrix of every layer</b> across all 4 GPUs.</p>
+    <p>3. Matrices are sliced either by <b>columns (8x2)</b> or by <b>rows (2x8)</b>.</p>
+    <p>4. Each GPU ends up with 1/4 of every layer (~118 GB total).</p>
+    <p><b>Now the payoff:</b> Part 2 runs a prompt through these shards and shows why four small matmuls beat one big one: and where AllGather and AllReduce enter.</p>`,
   setup(body){
     const row = el('div','row');
     for(let g=0;g<4;g++){
@@ -498,19 +546,19 @@ P1.push({
         stack.appendChild(bar);
       }
       inner.appendChild(stack);
-      inner.appendChild(el('div','caption','¼ of every<br>layer (1…94)'));
+      inner.appendChild(el('div','caption','1/4 of every<br>layer (1...94)'));
       const mb = el('div','membar'); const f=el('div'); f.style.width='83%'; mb.appendChild(f); inner.appendChild(mb);
       row.appendChild(gpuBox(g, inner));
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','Mental model to keep: the model wasn\'t stacked <i>across</i> GPUs like books on shelves — it was <b>sliced lengthwise</b>, like a cake cut so every plate gets every flavor… I mean, every layer.'));
+    body.appendChild(el('div','bigNote','Mental model to keep: the model was not stacked across GPUs like books on shelves. It was <b>sliced lengthwise</b>, like a cake cut so every plate gets a taste of every layer.'));
   }
 });
 
 /* ================= PART 2 ================= */
 const P2 = [];
 
-/* ---- 2.1 the embedding table + 2.2 the lookup ---- */
+/* ---- 2.1 the embedding table ---- */
 const TOKS = [ {t:'"The"', id:785, v:E[0]}, {t:'"▁cat"', id:4415, v:E[1]}, {t:'"▁sat"', id:7139, v:E[2]} ];
 const ghostCell = ()=>{ const g=el('div','cell small','⋯'); g.style.cssText+=';border:1px dashed var(--line);background:transparent;color:var(--dim);'; return g; };
 function embTable(){
@@ -523,7 +571,6 @@ function embTable(){
     {id:151935, v:fill(151935), tok:'"▁zebra"'}
   ];
   const box = el('div'); box.style.cssText='display:flex;flex-direction:column;gap:3px;align-items:flex-start;';
-  // header: token axis (down) vs hidden-dimension axis (across)
   const head = el('div'); head.style.cssText='display:flex;align-items:center;gap:8px;padding:1px 4px;';
   const hl = el('div','caption','token ↓ · id'); hl.style.cssText+=';min-width:120px;text-align:right;';
   head.appendChild(hl);
@@ -550,12 +597,11 @@ function embTable(){
 }
 
 P2.push({
-  title:'Before any input: the embedding table — 151,936 rows × 4096 columns',
+  title:'Before any input: The embedding table (151,936 rows x 4096 columns)',
   text:`<h2>One table, fixed at design time</h2>
-    <p>Every transformer fixes two numbers up front: a <b>vocab size</b> — how many distinct token types its tokenizer knows — and a <b>hidden size</b> — the width of every vector inside the model. The embedding table is always <code>vocab_size × hidden_size</code>. For Qwen3-235B-A22B, straight from config.json: <b>151,936 × 4096</b>.</p>
-    <p><b>Read the axes carefully:</b> tokens run <i>downward</i> — 151,936 rows, one per token type — and the 4096 hidden dimensions run <i>across</i> (d1…d8 drawn, dashed <b>⋯</b> for the rest). "vocab × hidden" names rows first, columns second; a token's embedding is one full <b>row</b>. (Token strings and IDs shown are illustrative.)</p>
-    <p>It's an ordinary learned weight matrix, loaded onto the GPUs with everything else: 151,936 × 4096 × 2 bytes ≈ <b>1.2 GB</b> of the ~470 GB.</p>
-    <p><b>No text has arrived yet.</b> The table just sits in memory, one row waiting for every possible token. Next step: a prompt shows up and we go find its rows.</p>`,
+    <p>Every transformer fixes two numbers up front: a <b>vocab size</b> (how many distinct token types its tokenizer knows) and a <b>hidden size</b> (the width of every vector inside the model).</p>
+    <p>The embedding table is always <code>vocab_size x hidden_size</code>. For Qwen3-235B-A22B, straight from config.json: <b>151,936 x 4096</b> (~1.2 GB in BF16).</p>
+    <p>Tokens run <i>downward</i> (151,936 rows) and hidden dimensions run <i>across</i> (d1...d8 drawn, dashed for the rest). A token's embedding is one full <b>row</b>.</p>`,
   setup(body){
     const col = el('div','col');
     const {box} = embTable();
@@ -564,18 +610,18 @@ P2.push({
     frame.appendChild(box);
     frame.classList.add('fadeIn');
     col.appendChild(frame);
-    col.appendChild(el('div','caption','shape: 151,936 × 4096 · one row per vocabulary entry · ≈1.2 GB in BF16'));
+    col.appendChild(el('div','caption','shape: 151,936 x 4096 · one row per vocabulary entry · ~1.2 GB in BF16'));
     body.appendChild(col);
   }
 });
 
+/* ---- 2.2 the lookup ---- */
 P2.push({
-  title:'A prompt arrives: look up "The cat sat" → stack the rows → X (3×8)',
+  title:'A prompt arrives: Look up "The cat sat" -> stack the rows -> X (3x8)',
   text:`<h2>Lookup, not math</h2>
-    <p>The tokenizer splits "The cat sat" into 3 tokens and assigns each an ID <i>(IDs shown are illustrative)</i>. An ID is nothing but a <b>row index</b> into the table. No multiplication happens here — the row is simply <b>copied out</b>. The other 151,933 rows are never even read.</p>
-    <p>The three copied rows are stacked in prompt order into <b>X</b> — a 3×8 matrix here, really <b>3×4096</b>. That stack IS the prefill input; nothing waits its turn.</p>
-    <div class="key"><b>The general rule (any transformer, any prompt):</b> N tokens → look up N rows → layer 1 always receives an <code>N × hidden_size</code> matrix. "I like mango" → 3×4096; a 1,000-token prompt → 1000×4096. Same machinery, any model, any prompt.</div>
-    <p>Every row is treated identically from here on. Only the AllReduce step (step 5) zooms into a single row — and says so when it does — purely to keep the number count readable.</p>`,
+    <p>The tokenizer splits "The cat sat" into 3 tokens and assigns each an ID (e.g. 785, 4415, 7139). An ID is nothing but a <b>row index</b> into the table.</p>
+    <p>The 3 matching rows are copied out and stacked in prompt order into <b>X</b>: a 3x8 matrix here, really <b>3x4096</b>. That stack IS the prefill input.</p>
+    <div class="key"><b>The general rule:</b> N tokens -> look up N rows -> layer 1 always receives an <code>N x hidden_size</code> matrix. Prefill processes all prompt tokens at once.</div>`,
   setup(body, id){
     const chipsRow = el('div','row');
     const idTags = [];
@@ -595,7 +641,7 @@ P2.push({
     const frame = el('div'); frame.style.cssText='border:1px solid var(--line2);border-radius:2px;padding:12px 16px;background:var(--panel);box-shadow:5px 5px 0 -1px var(--line);';
     frame.appendChild(box);
     tcol.appendChild(frame);
-    tcol.appendChild(el('div','caption','the same embedding table — watch the 3 rows get found'));
+    tcol.appendChild(el('div','caption','the same embedding table: watch the 3 rows get found'));
     row.appendChild(tcol);
     row.appendChild(el('div','arrow','⟶ copy rows ⟶'));
     const xcol = el('div','col');
@@ -606,10 +652,10 @@ P2.push({
     for(let i=0;i<3;i++) gcol.appendChild(ghostCell());
     xwrap.appendChild(gcol);
     xcol.appendChild(xwrap);
-    xcol.appendChild(el('div','caption','X (3×8 shown, really 3×4096) —<br>the input to layer 1: all tokens, one matrix'));
+    xcol.appendChild(el('div','caption','X (3x8 shown, really 3x4096):<br>input to layer 1 (all tokens, one matrix)'));
     row.appendChild(xcol);
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','Prefill processes this whole 3×8 block in one go — no token-by-token loop. (The loop is <b>decode</b>, a different story with different bottlenecks.) Next: the full block hits W on one GPU, and you\'ll see the three rows never interact inside a matmul.'));
+    body.appendChild(el('div','bigNote','Prefill processes this entire 3x8 block in one go: no token-by-token loop. (The token-by-token loop is <b>decode</b>, with different bottlenecks.)'));
     (async()=>{
       await sleep(700);
       for(let t=0;t<3;t++){
@@ -629,38 +675,36 @@ P2.push({
     })();
   }
 });
-</script>
-<script>
-/* ---- 2.2 single-GPU baseline ---- */
+
+/* ---- 2.3 single-GPU baseline ---- */
 P2.push({
-  title:'Baseline: ONE GPU computes the whole 3×8 block · W — 192 multiply-adds, alone',
-  text:`<h2>The full-size matmul — all tokens at once</h2>
-    <p>The input is the full 3×8 block. Key fact: <code>(3×8)·(8×8)</code> is nothing more than <b>three independent</b> <code>(1×8)·(8×8)</code> products sharing the same W — the "cat" row never touches the "The" row's arithmetic. Watch: for every column of W, <b>all three output cells fill simultaneously</b>.</p>
-    <p>Per token row: 8 columns × 8 = 64 multiply-adds. Three rows → <b>192 total</b>, all owned by one GPU. Longer prompt = more rows = more work, but zero extra <i>sequential</i> depth — that independence is exactly what GPUs (and the next step) exploit.</p>
-    <p>Remember this 3×8 output — the sharded versions must reproduce <b>every cell</b> of it exactly.</p>
-    <p>Real scale: 4096×4096 → <b>~16.7 million</b> multiply-adds per matrix per token, ~6 matrices per layer, 94 layers, × every prompt token. That mountain is what you wait for before the first token.</p>`,
+  title:'Baseline: ONE GPU computes the full 3x8 block · W (192 multiply-adds)',
+  text:`<h2>The full-size matmul: All tokens at once</h2>
+    <p>The input is the full 3x8 block. Multiplying <code>(3x8)·(8x8)</code> is nothing more than <b>three independent</b> <code>(1x8)·(8x8)</code> products sharing the same W: the "cat" row never touches the "The" row's arithmetic.</p>
+    <p>Per token row: 8 columns x 8 = 64 multiply-adds. Three rows -> <b>192 total multiply-adds</b>, all computed on one GPU.</p>
+    <div class="note">Remember this 3x8 output: our sharded multi-GPU versions must reproduce <b>every cell</b> of it exactly.</div>`,
   setup(body, id){
     const row = el('div','row');
     const colL = el('div','col');
     const xm = mtx(E, {small:true});
     xm.querySelectorAll('.cell').forEach(paintInk);
-    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3×8, really 3×4096) — one row<br>per token, all rows multiply W together'));
+    colL.appendChild(xm); colL.appendChild(el('div','caption','X (3x8, really 3x4096): one row<br>per token, all rows multiply W together'));
     row.appendChild(colL);
     row.appendChild(el('div','eq','·'));
     const colW = el('div','col');
-    const wm = mtx(W); colW.appendChild(wm); colW.appendChild(el('div','caption','W (8×8, really 4096×4096) — full matrix'));
+    const wm = mtx(W); colW.appendChild(wm); colW.appendChild(el('div','caption','W (8x8, really 4096x4096): full matrix'));
     row.appendChild(colW);
     row.appendChild(el('div','eq','='));
     const colY = el('div','col');
     const ym = mtx(E.map(()=>Array(8).fill('')), {small:true});
-    colY.appendChild(ym); colY.appendChild(el('div','caption','Y (3×8, really 3×4096) —<br>one output row per token'));
+    colY.appendChild(ym); colY.appendChild(el('div','caption','Y (3x8, really 3x4096):<br>one output row per token'));
     row.appendChild(colY);
     body.appendChild(row);
     const meter = el('div','col'); meter.style.marginTop='22px';
     const cnt = el('div','counter','multiply-adds: <b>0</b> / 192 (64 per token row)');
     const tw = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--accent)'; tb.appendChild(tf); tw.appendChild(tb);
     meter.appendChild(cnt); meter.appendChild(tw);
-    meter.appendChild(el('div','caption','time on 1 GPU → the rows are independent of each other, but one GPU still owns ALL of the work'));
+    meter.appendChild(el('div','caption','time on 1 GPU: rows are independent of each other, but one GPU still owns ALL of the work'));
     body.appendChild(meter);
     (async()=>{
       await sleep(500);
@@ -681,19 +725,20 @@ P2.push({
   }
 });
 
-/* ---- 2.3 column-parallel ---- */
+/* ---- 2.4 column-parallel compute ---- */
 P2.push({
-  title:'Same job on 4 GPUs: each multiplies X by its 8×2 shard — simultaneously',
-  text:`<h2>Why TTFT drops: smaller matmuls, in parallel</h2>
-    <p>The <b>whole 3×8 block</b> is broadcast to all four GPUs (cheap — activations are tiny next to weights). Watch X copy down to each GPU. Each GPU then computes <code>(3×8) · (8×2 shard)</code> = a <b>3×2 tile</b> of the output: its two columns, for ALL three tokens at once. Watch every row fill — nothing is dropped.</p>
-    <p>Per GPU: 48 multiply-adds (16 per token row), all four GPUs simultaneously. Total work is still 192 — but <b>wall-clock time is 48 units, not 192</b>. That is the whole TTFT story in one picture.</p>
-    <div class="key"><b>The join here is NOT AllReduce.</b> Column-split shards produce <i>different, complete</i> tiles of the output. Joining them = laying the tiles side by side (an <b>all-gather</b>/concat). Compare the assembled 3×8 with step 3: identical, bit for bit.</div>`,
+  title:'Column-Parallel compute: 4 GPUs multiply X by 8x2 shards in parallel',
+  text:`<h2>Step 1 of Column Parallelism: Parallel Math</h2>
+    <p>The <b>whole 3x8 block</b> is broadcast to all four GPUs. (Activations are tiny next to weights, so broadcast is fast.)</p>
+    <p>Each GPU computes <code>(3x8) · (8x2 shard)</code> = a <b>3x2 tile</b> of the output: its two assigned columns for ALL three tokens at once.</p>
+    <p>Per GPU: 48 multiply-adds (16 per token row), all four GPUs working simultaneously. Total work is 192, but <b>wall-clock time is 48 units, not 192</b>.</p>
+    <div class="key">Notice: Each GPU holds a <i>different, complete</i> 3x2 tile of the final matrix. Next: how do we join them?</div>`,
   setup(body, id){
     const bc = el('div','col');
     const bx = mtx(E,{small:true});
     bx.querySelectorAll('.cell').forEach(paintInk);
     bc.appendChild(bx);
-    bc.appendChild(el('div','caption','the FULL 3×8 block — every token — is broadcast to all 4 GPUs ↓'));
+    bc.appendChild(el('div','caption','the FULL 3x8 block (every token) is broadcast to all 4 GPUs ↓'));
     body.appendChild(bc);
     const row = el('div','row'); row.style.marginTop='14px';
     const parts=[];
@@ -701,20 +746,20 @@ P2.push({
       const inner = el('div','col');
       const xm = mtx(E.map(()=>Array(8).fill('')),{small:true});
       inner.appendChild(xm);
-      inner.appendChild(el('div','caption','X copy (3×8)'));
+      inner.appendChild(el('div','caption','X copy (3x8)'));
       inner.appendChild(el('div','plus','×'));
       const opRow = el('div','row'); opRow.style.cssText='gap:8px;align-items:center;';
       const shard = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
       const sm = mtx(shard,{colorOf:()=>g, small:true});
       const shardCol = el('div','col');
       shardCol.appendChild(sm);
-      shardCol.appendChild(el('div','caption',`8×2 shard<br>(cols ${2*g}–${2*g+1})`));
+      shardCol.appendChild(el('div','caption',`8x2 shard<br>(cols ${2*g}-${2*g+1})`));
       opRow.appendChild(shardCol);
       opRow.appendChild(el('div','arrow','→'));
       const ym = mtx(E.map(()=>['','']),{small:true});
       const tileCol = el('div','col');
       tileCol.appendChild(ym);
-      tileCol.appendChild(el('div','caption',`3×2 tile<br>(cols ${2*g}–${2*g+1})`));
+      tileCol.appendChild(el('div','caption',`3x2 tile<br>(cols ${2*g}-${2*g+1})`));
       opRow.appendChild(tileCol);
       inner.appendChild(opRow);
       const cnt = el('div','counter','<b>0</b>/48 MACs');
@@ -724,19 +769,13 @@ P2.push({
       parts.push({xm, sm, ym, cnt, bx:gpu, g});
     }
     body.appendChild(row);
-    const joinCol = el('div','col'); joinCol.style.marginTop='20px';
-    const joined = mtx(E.map(()=>Array(8).fill('')),{small:true});
-    joinCol.appendChild(el('div','caption','join = CONCATENATE the tiles side by side (all-gather) ↓'));
-    joinCol.appendChild(joined);
-    const check = el('div','caption','');
-    joinCol.appendChild(check);
-    const meter = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--ok)'; tb.appendChild(tf); meter.appendChild(tb);
-    joinCol.appendChild(meter);
-    joinCol.appendChild(el('div','caption','time on 4 GPUs → 48 units (bar drawn to the same 192-unit scale as step 3)'));
-    body.appendChild(joinCol);
+    const meter = el('div','col'); meter.style.marginTop='20px';
+    const tw = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--ok)'; tb.appendChild(tf); meter.appendChild(tw);
+    meter.appendChild(tw);
+    meter.appendChild(el('div','caption','time on 4 GPUs: 48 units (bar drawn to the same 192-unit scale as baseline)'));
+    body.appendChild(meter);
     (async()=>{
       await sleep(500); if(!alive(id)) return;
-      // 1. Broadcast: full 3x8 block lands on every GPU
       const srcCells = bx.querySelectorAll('.cell');
       parts.forEach(p=>p.bx.classList.add('active'));
       for(let t=0;t<3;t++){
@@ -751,18 +790,17 @@ P2.push({
             cell.classList.add('flash');
           });
         }
-        await sleep(220); if(!alive(id)) return;
+        await sleep(200); if(!alive(id)) return;
       }
-      await sleep(400); if(!alive(id)) return;
+      await sleep(350); if(!alive(id)) return;
 
-      // 2. Multiply: each GPU multiplies its X copy by its 8x2 shard in parallel
-      for(let c=0;c<2;c++){          // both shard-columns, all GPUs in parallel, all token rows at once
+      for(let c=0;c<2;c++){
         if(!alive(id)) return;
         parts.forEach(p=>{
           p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
           p.xm.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
         });
-        await sleep(550); if(!alive(id)) return;
+        await sleep(500); if(!alive(id)) return;
         parts.forEach(p=>{
           for(let t=0;t<3;t++){
             const yc = p.ym.querySelectorAll('.cell')[t*2+c];
@@ -771,7 +809,7 @@ P2.push({
           }
           p.cnt.innerHTML = `<b>${(c+1)*24}</b>/48 MACs`;
         });
-        tf.style.transition='width .5s linear'; tf.style.width = ((c+1)*12.5)+'%'; // same scale: 48/192 = 25% total
+        tf.style.transition='width .5s linear'; tf.style.width = ((c+1)*12.5)+'%';
         await sleep(350); if(!alive(id)) return;
         parts.forEach(p=>{
           p.xm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
@@ -781,35 +819,63 @@ P2.push({
         p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
         p.bx.classList.remove('active');
       });
-      await sleep(450); if(!alive(id)) return;
+    })();
+  }
+});
 
-      // 3. Concat / Gather tiles
+/* ---- 2.5 AllGather ---- */
+P2.push({
+  title:'AllGather: Concatenating the column tiles side-by-side',
+  text:`<h2>Step 2 of Column Parallelism: AllGather</h2>
+    <p>Because each GPU computed a separate slice of output columns, combining them requires <b>zero arithmetic</b>.</p>
+    <p>We simply place the four 3x2 tiles side-by-side in column order. This communication operation is called an <b>AllGather</b> (or concatenation).</p>
+    <p>All GPUs exchange their tiles over the interconnect so every GPU ends up with the full 3x8 matrix.</p>
+    <div class="key"><b>AllGather = Concatenate.</b> Compare this assembled 3x8 matrix to the 1-GPU baseline: all 24 numbers match bit-for-bit.</div>`,
+  setup(body, id){
+    const row = el('div','row');
+    const tiles=[];
+    for(let g=0;g<4;g++){
+      const inner = el('div','col');
+      const tile = Array.from({length:3},(_,r)=>[YM[r][2*g], YM[r][2*g+1]]);
+      const tm = mtx(tile, {colorOf:()=>g, small:true});
+      inner.appendChild(tm);
+      inner.appendChild(el('div','caption',`3x2 tile on GPU ${g}<br>(cols ${2*g}-${2*g+1})`));
+      const bx = gpuBox(g, inner);
+      row.appendChild(bx);
+      tiles.push(tm);
+    }
+    body.appendChild(row);
+    const joinCol = el('div','col'); joinCol.style.marginTop='22px';
+    joinCol.appendChild(el('div','arrow','↓↓↓↓  AllGather: GPUs exchange tiles over interconnect  ↓↓↓↓'));
+    const joined = mtx(E.map(()=>Array(8).fill('')),{small:true});
+    joinCol.appendChild(joined);
+    const check = el('div','caption','');
+    joinCol.appendChild(check);
+    body.appendChild(joinCol);
+    (async()=>{
+      await sleep(600); if(!alive(id)) return;
       for(let g=0;g<4;g++){
+        if(!alive(id)) return;
         for(let t=0;t<3;t++) for(let c=0;c<2;c++){
           const cell = joined.querySelectorAll('.cell')[t*8+2*g+c];
           cell.textContent = YM[t][2*g+c]; paint(cell,g);
           cell.classList.add('flash');
         }
-        await sleep(280); if(!alive(id)) return;
+        await sleep(350);
       }
-      check.innerHTML = `all 24 cells match the single-GPU 3×8 output exactly <span class="okmark">✓</span>`;
+      check.innerHTML = `all 24 cells match the single-GPU 3x8 output exactly <span class="okmark">✓</span>`;
     })();
   }
 });
 
-/* ---- 2.4 row-parallel + AllReduce ---- */
+/* ---- 2.6 row-parallel compute ---- */
 P2.push({
-  title:'The other cut: rows. Now every GPU makes a PARTIAL Y — AllReduce sums them',
-  text:`<h2>Where AllReduce actually comes from</h2>
-    <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). Watch the top: X is broadcast to all four, but a row-split GPU can only use the <b>2 entries that line up with the rows it holds</b> — row r of W is multiplied by entry r of X, so 2 rows means 2 entries.</p>
-    <p>Each GPU then sweeps its shard column by column, computing <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… which is only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU only saw 2 rows.</p>
-    <p><i>Visual note:</i> We highlight row 0 ("The") while rows 1–2 ("cat", "sat") run identically in parallel in the background, keeping the on-screen math clean and readable.</p>
-    <p><b>AllReduce</b> = all GPUs pool their partial vectors over interconnect wires, sum element-wise, and <i>everyone</i> ends up holding the identical total. Look: the four partial rows add up to exactly the same Y again.</p>
-    <div class="key"><b>Why both cuts exist (Megatron-LM pattern):</b>
-      A transformer block chains two matmuls back-to-back (e.g. <code>W_up</code> then <code>W_down</code>, or <code>QKV</code> then <code>Out</code>):<br>
-      ① <b>First matmul (Column-Split):</b> broadcast input → each GPU computes its column tile (<b>0 communication!</b>).<br>
-      ② <b>Second matmul (Row-Split):</b> each GPU feeds its column tile directly into its row shard.<br>
-      ③ <b>The payoff:</b> Zero communication between the two matmuls! You only do <b>ONE AllReduce</b> at the end of the entire block.</div>`,
+  title:'Row-Parallel compute: 4 GPUs multiply row slices by 2x8 shards',
+  text:`<h2>Step 1 of Row Parallelism: Partial Sums</h2>
+    <p>Now consider the second cut: <b>Row Sharding</b>. GPU i holds rows 2i to 2i+1 of W (a 2x8 block).</p>
+    <p>Each GPU only needs the 2 entries of X that match its row indices. It computes: <code>(1x2) · (2x8)</code> -> a <b>1x8 partial output</b>.</p>
+    <p>This 1x8 vector is only a <b>partial sum</b> because each GPU only held 2 of the 8 terms required for each dot product.</p>
+    <div class="note"><b>Visual note:</b> We highlight row 0 ("The") here while rows 1-2 ("cat", "sat") compute identically in parallel, keeping the numbers readable.</div>`,
   setup(body, id){
     const bc = el('div','col');
     const xFull = mtx(E, {small:true});
@@ -818,45 +884,28 @@ P2.push({
       else { cell.classList.add('dimmed'); cell.style.opacity='0.35'; }
     });
     bc.appendChild(xFull);
-    bc.appendChild(el('div','caption','X (3×8 prompt) — row 0 ("The") highlighted for animation<br>(rows for "cat" & "sat" compute identically in parallel; showing 1 row to keep math readable) ↓'));
+    bc.appendChild(el('div','caption','X (3x8 prompt): row 0 ("The") highlighted for animation<br>(rows for "cat" & "sat" compute identically in parallel; showing 1 row to keep math readable) ↓'));
     body.appendChild(bc);
     const row = el('div','row'); row.style.marginTop='14px';
     const parts=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col');
       const xs = mtx([['','']], {small:true});
-      inner.appendChild(xs); inner.appendChild(el('div','caption',`X slice (1×2): entries ${2*g}–${2*g+1}`));
+      inner.appendChild(xs); inner.appendChild(el('div','caption',`X slice (1x2): entries ${2*g}-${2*g+1}`));
       inner.appendChild(el('div','plus','×'));
       const sm = mtx([W[2*g], W[2*g+1]],{colorOf:()=>g, small:true});
       inner.appendChild(sm);
-      inner.appendChild(el('div','caption',`row shard (2×8): rows ${2*g}–${2*g+1}`));
+      inner.appendChild(el('div','caption',`row shard (2x8): rows ${2*g}-${2*g+1}`));
       const pm = mtx([Array(8).fill('')],{small:true});
-      inner.appendChild(pm); inner.appendChild(el('div','caption','partial Y (1×8)'));
+      inner.appendChild(pm); inner.appendChild(el('div','caption','partial Y (1x8)'));
       const bx = gpuBox(g, inner);
       row.appendChild(bx);
       parts.push({pm, xs, sm, bx, g});
     }
     body.appendChild(row);
-    const ar = el('div','col'); ar.style.marginTop='18px';
-    ar.appendChild(el('div','caption','⇅ AllReduce: every GPU sends its partial to the others, sums arrive everywhere ⇅'));
-    const stackBox = el('div','col'); stackBox.style.gap='4px';
-    const stackRows=[];
-    for(let g=0;g<4;g++){
-      const r = mtx([Array(8).fill('')],{small:true});
-      stackRows.push(r); stackBox.appendChild(r);
-      if(g<3) stackBox.appendChild(el('div','plus','+'));
-    }
-    stackBox.appendChild(el('div','sumline')).style.width='230px';
-    const sum = mtx([Array(8).fill('')],{small:true});
-    stackBox.appendChild(sum);
-    const check = el('div','caption','');
-    ar.appendChild(stackBox); ar.appendChild(sum ? check : check);
-    body.appendChild(ar);
-    const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical full Y</b> — ready to start the next layer. <b>Why does AllReduce cost time?</b> Inside a single GPU, memory bandwidth is ~3.35 TB/s (HBM3). High-speed NVLink wires between GPUs are fast (~900 GB/s) but still ~4× slower than on-chip memory. Exchanging vectors across GPUs is cheap, but not zero-cost — this is the "communication tax" in the race.');
-    body.appendChild(foot);
+    body.appendChild(el('div','bigNote','Each GPU computes a full-width 1x8 vector, but each number in it is missing terms from the other 6 rows. Next step: how do we sum them?'));
     (async()=>{
       await sleep(500); if(!alive(id)) return;
-      // broadcast: each GPU takes delivery of the 2 X entries matching its rows
       const srcCells = xFull.querySelectorAll('.cell');
       for(const p of parts){
         if(!alive(id)) return;
@@ -866,10 +915,9 @@ P2.push({
           paint(srcCells[c], p.g); srcCells[c].classList.add('flash');
           cell.textContent = X[c]; paint(cell, p.g); cell.classList.add('flash');
         });
-        await sleep(380);
+        await sleep(350);
       }
       await sleep(400); if(!alive(id)) return;
-      // multiply: all 4 GPUs sweep their shard column by column, in parallel
       for(let c=0;c<8;c++){
         if(!alive(id)) return;
         parts.forEach(p=>{
@@ -889,8 +937,38 @@ P2.push({
         p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
         p.bx.classList.remove('active');
       });
+    })();
+  }
+});
+
+/* ---- 2.7 AllReduce ---- */
+P2.push({
+  title:'AllReduce: Summing partial vectors across all GPUs',
+  text:`<h2>Step 2 of Row Parallelism: AllReduce</h2>
+    <p>Because each GPU produced an incomplete partial sum, joining them requires <b>element-wise addition</b>.</p>
+    <p><b>AllReduce</b> pools the partial vectors from all GPUs, adds them element-wise, and ensures every GPU holds the final sum.</p>
+    <div class="key"><b>AllReduce = Sum.</b> The four partial rows sum up to the exact same full vector Y as the 1-GPU baseline.</div>
+    <div class="note"><b>Hardware reality:</b> AllReduce transfers data across physical interconnect wires (NVLink). High-speed NVLink (~900 GB/s) is fast, but slower than on-chip memory (~3.35 TB/s). This transfer is the "communication tax".</div>`,
+  setup(body, id){
+    const ar = el('div','col'); ar.style.marginTop='10px';
+    ar.appendChild(el('div','caption','⇅ AllReduce: every GPU sends its partial to the others, element-wise sums arrive everywhere ⇅'));
+    const stackBox = el('div','col'); stackBox.style.gap='4px';
+    const stackRows=[];
+    for(let g=0;g<4;g++){
+      const r = mtx([Array(8).fill('')],{small:true});
+      stackRows.push(r); stackBox.appendChild(r);
+      if(g<3) stackBox.appendChild(el('div','plus','+'));
+    }
+    stackBox.appendChild(el('div','sumline')).style.width='230px';
+    const sum = mtx([Array(8).fill('')],{small:true});
+    stackBox.appendChild(sum);
+    const check = el('div','caption','');
+    ar.appendChild(stackBox); ar.appendChild(check);
+    body.appendChild(ar);
+    const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical full Y</b>: ready to start the next layer. Cost: one exchange of a tiny vector over NVLink, vs. re-doing 16.7M multiply-adds on 1 GPU.');
+    body.appendChild(foot);
+    (async()=>{
       await sleep(500); if(!alive(id)) return;
-      // fly partials into the stack
       for(let g=0;g<4;g++){
         if(!alive(id)) return;
         stackRows[g].querySelectorAll('.cell').forEach((cell,c)=>{
@@ -904,19 +982,58 @@ P2.push({
       sum.querySelectorAll('.cell').forEach((cell,c)=>{
         cell.textContent = Y[c]; paintInk(cell); cell.classList.add('flash');
       });
-      check.innerHTML = `same Y again <span class="okmark">✓</span> — [${Y.join(' ')}] · four shard-matmuls ≡ one big matmul`;
+      check.innerHTML = `same Y again <span class="okmark">✓</span>: [${Y.join(' ')}] (four shard-matmuls ≡ one big matmul)`;
     })();
   }
 });
 
-/* ---- 2.5 through the layers ---- */
+/* ---- 2.8 megatron col-to-row pairing ---- */
 P2.push({
-  title:'Prefill = this rhythm, 94 times: compute in parallel → one AllReduce → next layer',
+  title:'Megatron-LM Pairing: Column cut directly into Row cut',
+  text:`<h2>Why both cuts exist: Zero intermediate communication</h2>
+    <p>A standard transformer block has two back-to-back matrix multiplications (such as <code>W_up</code> followed by <code>W_down</code> in the MLP, or <code>QKV</code> followed by <code>Out</code> in Attention).</p>
+    <p><b>The Megatron pattern:</b></p>
+    <p>1. <b>First matmul (Column-Split):</b> Each GPU multiplies input X by its column shard, producing a 2-column tile. (No AllGather needed! The tile stays on that GPU.)</p>
+    <p>2. <b>Second matmul (Row-Split):</b> Each GPU multiplies its 2-column tile by its row shard, producing a partial vector.</p>
+    <div class="key"><b>The payoff:</b> Zero communication between the two matmuls. We skip the AllGather completely and perform only <b>ONE AllReduce</b> at the end of the entire block.</div>`,
+  setup(body){
+    const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='840px';
+
+    const stage1 = el('div','row'); stage1.style.gap='12px';
+
+    for(let g=0;g<4;g++){
+      const inner = el('div','col'); inner.style.gap='6px';
+      inner.appendChild(el('div','chip',`1. Col Matmul<br><small style="color:var(--dim)">produces cols ${2*g}-${2*g+1}</small>`));
+      inner.appendChild(el('div','arrow','↓'));
+      inner.appendChild(el('div','tag','local data (0 comm)'));
+      inner.appendChild(el('div','arrow','↓'));
+      inner.appendChild(el('div','chip',`2. Row Matmul<br><small style="color:var(--dim)">uses cols ${2*g}-${2*g+1}</small>`));
+      const box1 = gpuBox(g, inner);
+      stage1.appendChild(box1);
+    }
+    flowWrap.appendChild(stage1);
+
+    const syncBox = el('div','col'); syncBox.style.marginTop='10px';
+    syncBox.appendChild(el('div','arrow','↓↓↓↓'));
+    const syncTag = el('div','tag','ONE AllReduce Sync for the entire block');
+    syncTag.style.cssText += ';font-size:12px;padding:6px 14px;background:var(--ink);color:var(--onInk);border-color:var(--ink);';
+    syncBox.appendChild(syncTag);
+    syncBox.appendChild(el('div','caption','All 4 GPUs sum partial vectors once -> ready for next layer'));
+    flowWrap.appendChild(syncBox);
+
+    body.appendChild(flowWrap);
+    body.appendChild(el('div','bigNote','By pairing <b>Column Cut -> Row Cut</b>, intermediate activations never leave the GPU that computed them. Two matrix multiplications require only <b>one sync point</b> over NVLink.'));
+  }
+});
+
+/* ---- 2.9 through the layers ---- */
+P2.push({
+  title:'Prefill drumbeat: 94 layers of parallel compute and sync',
   text:`<h2>The full forward pass</h2>
-    <p>Layer 1's output (after its AllReduce, identical on all GPUs) <b>is</b> layer 2's input. No weights move between GPUs — every GPU already holds its slices of layer 2.</p>
-    <p>Because Column-Parallel and Row-Parallel are paired together, each layer needs only <b>one sync point</b>. Prefill becomes a clean rhythm:</p>
-    <p><b>[Col-Matmul → Row-Matmul on 4 GPUs in parallel] → [One AllReduce Sync] → Next Layer</b> ×94 times.</p>
-    <p>The four bars lifting together show all GPUs working simultaneously; the <code>AllReduce</code> tag is the quick sync before the next layer begins.</p>`,
+    <p>Layer 1's output (after its AllReduce, identical on all GPUs) is layer 2's input. No weights move: every GPU already holds its slices of layer 2.</p>
+    <p>Prefill becomes a repeating rhythm across all 94 layers:</p>
+    <p><b>[Col-Matmul -> Row-Matmul on 4 GPUs in parallel] -> [One AllReduce Sync] -> Next Layer</b> (94 times).</p>
+    <p>The four bars show GPUs computing simultaneously; the <code>AllReduce</code> tag is the quick sync between layers.</p>`,
   setup(body, id){
     const chain = el('div','col');
     const rows=[];
@@ -938,7 +1055,7 @@ P2.push({
     chain.appendChild(wrap);
     body.appendChild(chain);
     const out = el('div','col'); out.style.marginTop='14px';
-    const tok = el('div','tokOut','first token → "Sure"');
+    const tok = el('div','tokOut','first token -> "Sure"');
     out.appendChild(tok);
     body.appendChild(out);
     (async()=>{
@@ -958,18 +1075,18 @@ P2.push({
   }
 });
 
-/* ---- 2.6 TTFT race ---- */
+/* ---- 2.10 TTFT race ---- */
 P2.push({
-  title:'The payoff: time-to-first-token, 1 GPU vs 4 GPUs',
+  title:'The payoff: Time-to-first-token, 1 GPU vs 4 GPUs',
   text:`<h2>Race through 94 layers</h2>
-    <p>Per layer (per weight matrix, per token): the 1-GPU lane pays <b>4 units of math</b>. The 4-GPU lane pays <b>1 unit of math + ~0.25 units of AllReduce tax</b>.</p>
-    <p>Over 94 layers: 376 units vs ~117 units → <b>~3.2× faster to the first token</b>, not 4×. The gap IS the communication cost — visible as the ochre slivers in the bottom lane.</p>
+    <p>Per layer (per weight matrix, per token): 1 GPU pays <b>4 units of math</b>. 4 GPUs pay <b>1 unit of math + ~0.25 units of AllReduce tax</b>.</p>
+    <p>Over 94 layers: 376 units vs ~117 units -> <b>~3.2x faster to the first token</b> (not 4x due to communication cost, visible as ochre slivers).</p>
     <div class="key"><b>The complete mental model:</b><br>
-      ① <b>Sharding:</b> Every weight matrix is sliced into blocks across all GPUs (¼ of every layer per GPU).<br>
-      ② <b>Parallel Compute:</b> Prefill broadcasts activations; each GPU computes a ¼-size matmul — wall-clock speedup.<br>
-      ③ <b>Column vs Row:</b> Column-split shards <i>concatenate</i>; row-split shards <i>AllReduce-sum</i>. Combining Col → Row means only 1 AllReduce per block.<br>
-      ④ <b>Hardware Reality:</b> Interconnect wires (NVLink) add a small communication overhead, yielding ~3.2× real-world speedup on 4 GPUs.</div>
-    <div class="note">Caveat kept honest: this model is MoE, so its FFN experts are usually split by <i>expert</i> parallelism in production, attention by tensor parallelism. And 470 GB BF16 needs H200-class cards or FP8. Neither changes the logic you just watched.</div>`,
+      1. <b>Sharding:</b> Every weight matrix is sliced into blocks across all GPUs (1/4 of every layer per GPU).<br>
+      2. <b>Parallel Math:</b> Each GPU computes a 1/4-size matmul: wall-clock speedup.<br>
+      3. <b>Column vs Row:</b> Column-split shards <i>concatenate</i> (AllGather); row-split shards <i>sum</i> (AllReduce). Combining Col -> Row needs only 1 AllReduce per block.<br>
+      4. <b>Hardware Reality:</b> Interconnect wires (NVLink) add a small communication overhead, yielding ~3.2x real-world speedup on 4 GPUs.</div>
+    <div class="note">Caveat kept honest: this model is MoE, so its FFN experts are usually split by expert parallelism in production, attention by tensor parallelism. And 470 GB BF16 needs H200 cards or FP8. Neither changes the logic you just watched.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='26px';
     function lane(label, colorHtml){
@@ -983,10 +1100,9 @@ P2.push({
       c.appendChild(tok);
       return {c, t, timer, tok};
     }
-    const l1 = lane('1 GPU — full-size matmuls, no communication');
-    const l4 = lane('4 GPUs — ¼-size matmuls (teal) + AllReduce tax (ochre)');
+    const l1 = lane('1 GPU: full-size matmuls, no communication');
+    const l4 = lane('4 GPUs: 1/4-size matmuls (teal) + AllReduce tax (ochre)');
     wrap.appendChild(l1.c); wrap.appendChild(l4.c);
-    // build segmented fills
     const f1 = el('div','raceFill'); f1.style.background='var(--accent)'; l1.t.appendChild(f1);
     const f4wrap = el('div'); f4wrap.style.cssText='display:flex;height:100%;width:0%;overflow:hidden;'; l4.t.appendChild(f4wrap);
     for(let i=0;i<20;i++){
@@ -997,7 +1113,7 @@ P2.push({
     const res = el('div','bigNote','');
     wrap.appendChild(res);
     body.appendChild(wrap);
-    const T1=376, T4=117.5, DUR=6000; // animate: 1 unit = DUR/T1 ms
+    const T1=376, T4=117.5, DUR=6000;
     (async()=>{
       await sleep(500); if(!alive(id)) return;
       const t0 = performance.now();
@@ -1008,10 +1124,10 @@ P2.push({
         f1.style.width = (u1/T1*100)+'%';
         f4wrap.style.width = (u4/T4*100)+'%';
         l1.timer.innerHTML = `elapsed: <b>${Math.round(u1)}</b> units`;
-        l4.timer.innerHTML = `elapsed: <b>${Math.round(u4)}</b> units` + (u4>=T4?' — done':'');
+        l4.timer.innerHTML = `elapsed: <b>${Math.round(u4)}</b> units` + (u4>=T4?' (done)':'');
         if(u4>=T4) l4.tok.style.opacity='1';
         if(u1>=T1){ l1.tok.style.opacity='1'; clearInterval(iv);
-          res.innerHTML = `TTFT: <b>376 units → 117.5 units</b> = <b>3.2× faster</b>. Not 4× — the ochre AllReduce tax is real. Bigger prompts amortize it better; slower interconnects (PCIe vs NVLink) make it worse.`;
+          res.innerHTML = `TTFT: <b>376 units -> 117.5 units</b> = <b>3.2x faster</b>. Not 4x: the ochre AllReduce tax is real. Bigger prompts amortize it better; slower interconnects (PCIe vs NVLink) make it worse.`;
         }
       }, 40);
     })();
