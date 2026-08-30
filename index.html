@@ -434,7 +434,8 @@ P1.push({
 P1.push({
   title:'Sharding style A: Column Cut (splitting weights vertically into 8x2 blocks)',
   text:`<h2>Cut W vertically into columns</h2>
-    <p>A layer stores weight matrices (like <code>W_Q, W_K, W_V, W_O, W_up, W_down</code>). Each is a grid of numbers.</p>
+    <p>A layer stores fixed weight matrices like <code>W_Q, W_K, W_V, W_O</code> (Attention) and <code>W_up, W_down</code> (MLP). Each is a static grid of numbers loaded on the GPUs from the start.</p>
+    <div class="note"><b>The Camera Lens Analogy:</b> <code>W_K</code> and <code>W_V</code> are <i>camera lenses</i> (fixed physical tools on the GPU). The <b>KV cache</b> is the <i>photo album</i> generated dynamically when prompt tokens pass through those lenses. The model stores the lenses from day one! (Similarly, <code>W_up</code> expands vector width like 4096 -> 14336 for processing, and <code>W_down</code> compresses it back 14336 -> 4096).</div>
     <p>In a <b>column cut</b>, we slice the matrix vertically into 4 column blocks. On our 8x8 stand-in:</p>
     <p>GPU 0 gets columns 0-1, GPU 1 gets columns 2-3, GPU 2 gets 4-5, and GPU 3 gets 6-7.</p>
     <div class="key">Each GPU holds an <b>8x2 shard</b> (16 numbers). Together, the four blocks make up the complete weight matrix.</div>`,
