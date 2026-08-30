@@ -131,6 +131,11 @@
   .layerCell{width:70px; height:20px; border-radius:1px; flex-shrink:0; transition:all .25s;}
   .raceLane{width:100%; max-width:820px;}
 
+  /* ---------- slicing visual animations ---------- */
+  .sliceContainer{display:flex; gap:3px; transition:gap .65s cubic-bezier(.34,1.4,.64,1); background:transparent; position:relative; padding:4px;}
+  .statusBadge{font-family:var(--mono); font-size:11px; padding:6px 14px; border-radius:2px; background:var(--panel); border:1px solid var(--line2); color:var(--text); text-transform:uppercase; letter-spacing:.06em; min-height:30px; display:flex; align-items:center; justify-content:center; transition:all .3s;}
+  .statusBadge.active{border-color:var(--accent); color:var(--accent); background:var(--warnWash); box-shadow:0 0 8px rgba(168,64,26,.15);}
+
   /* ---------- mobile / tablet ---------- */
   @media (max-width: 900px){
     header{padding:12px 14px; gap:10px; flex-direction:column; align-items:stretch;}
@@ -441,37 +446,73 @@ P1.push({
       if(i===0){ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)'; }
       chips.appendChild(c);
     });
-    top.appendChild(el('div','caption','one layer stores these weight grids: we demonstrate column sharding on W:'));
+    top.appendChild(el('div','caption','one layer stores these weight grids: we demonstrate column slicing on W:'));
     top.appendChild(chips);
-    const wm = mtx(W, {id:'srcWCol'});
-    top.appendChild(el('div','arrow','↓'));
-    top.appendChild(wm);
-    top.appendChild(el('div','caption','W (8x8 stand-in): watch the columns take GPU colors, then move to GPUs'));
-    body.appendChild(top);
-    const row = el('div','row'); row.style.marginTop='26px';
-    const holders=[];
+
+    const status = el('div','statusBadge','1. Full 8x8 weight matrix W on host');
+    status.style.marginTop='10px';
+    top.appendChild(status);
+
+    const container = el('div','sliceContainer');
+    container.style.marginTop='6px';
+    const blocks = [];
     for(let g=0;g<4;g++){
-      const holder = el('div'); holders.push(holder);
+      const shardData = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
+      const blockEl = mtx(shardData, {small:true});
+      container.appendChild(blockEl);
+      blocks.push(blockEl);
+    }
+    top.appendChild(container);
+    top.appendChild(el('div','caption','W (8x8 stand-in): watch the vertical cut lines split W into 4 column blocks'));
+    body.appendChild(top);
+
+    const row = el('div','row'); row.style.marginTop='22px';
+    const holders=[];
+    const gpuBoxes=[];
+    for(let g=0;g<4;g++){
+      const holder = el('div','col');
+      const mb = el('div','membar'); mb.style.width='80px'; const mf = el('div'); mb.appendChild(mf);
+      holder.appendChild(mb);
       const bx = gpuBox(g, holder);
       bx.appendChild(el('div','caption',`column shard: 8x2 = 16 numbers<br>(cols ${2*g}-${2*g+1})`));
       row.appendChild(bx);
+      holders.push(holder);
+      gpuBoxes.push({bx, mf});
     }
     body.appendChild(row);
+
     (async()=>{
-      await sleep(600); if(!alive(id)) return;
-      wm.querySelectorAll('.cell').forEach(cell=>{
-        const g = Math.floor(cell.dataset.c/2);
-        paint(cell,g);
+      await sleep(700); if(!alive(id)) return;
+
+      // Phase 2: Slicing vertically into 4 column strips
+      status.textContent = '2. Slicing vertically into four 8x2 column blocks';
+      status.classList.add('active');
+      container.style.gap = '16px';
+      blocks.forEach((b,g)=>{
+        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+        b.classList.add('flash');
       });
-      await sleep(1100); if(!alive(id)) return;
+      await sleep(1400); if(!alive(id)) return;
+
+      // Phase 3: Loading into GPUs
+      status.textContent = '3. Loading 8x2 column shards into GPU memory';
       for(let g=0;g<4;g++){
         if(!alive(id)) return;
-        wm.querySelectorAll('.cell').forEach(cell=>{ if(Math.floor(cell.dataset.c/2)===g) cell.classList.add('dimmed'); });
-        const shard = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
-        const sm = mtx(shard,{colorOf:()=>g, small:true}); sm.classList.add('fadeIn');
-        holders[g].appendChild(sm);
-        await sleep(450);
+        gpuBoxes[g].bx.classList.add('active');
+        blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+        const shardData = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
+        const sm = mtx(shardData, {colorOf:()=>g, small:true});
+        sm.classList.add('fadeIn');
+        holders[g].insertBefore(sm, holders[g].firstChild);
+        gpuBoxes[g].mf.style.width = '83%';
+        await sleep(500);
+        gpuBoxes[g].bx.classList.remove('active');
       }
+
+      // Phase 4: Complete
+      if(!alive(id)) return;
+      status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (columns 2i to 2i+1)';
+      status.classList.remove('active');
     })();
   }
 });
@@ -482,7 +523,7 @@ P1.push({
   text:`<h2>Cut W horizontally into rows</h2>
     <p>The other way to slice a weight matrix is <b>by rows</b>.</p>
     <p>In a <b>row cut</b>, we slice the matrix horizontally into 4 row blocks. On our 8x8 stand-in:</p>
-    <p>GPU 0 gets rows 0-1, GPU 1 gets rows 2-3, GPU 2 gets rows 4-5, and GPU 3 gets rows 6-7.</p>
+    <p>GPU 0 gets rows 0-1, GPU 1 gets rows 2-3, GPU 2 gets 4-5, and GPU 3 gets rows 6-7.</p>
     <div class="key">Each GPU holds a <b>2x8 shard</b> (16 numbers). Column cut vs Row cut determines whether the output needs <b>AllGather</b> (concatenation) or <b>AllReduce</b> (summation).</div>`,
   setup(body, id){
     const top = el('div','col');
@@ -492,37 +533,73 @@ P1.push({
       if(i===1){ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)'; }
       chips.appendChild(c);
     });
-    top.appendChild(el('div','caption','demonstrating row sharding on W:'));
+    top.appendChild(el('div','caption','demonstrating row slicing on W:'));
     top.appendChild(chips);
-    const wm = mtx(W, {id:'srcWRow'});
-    top.appendChild(el('div','arrow','↓'));
-    top.appendChild(wm);
-    top.appendChild(el('div','caption','W (8x8 stand-in): watch the rows take GPU colors, then move to GPUs'));
-    body.appendChild(top);
-    const row = el('div','row'); row.style.marginTop='26px';
-    const holders=[];
+
+    const status = el('div','statusBadge','1. Full 8x8 weight matrix W on host');
+    status.style.marginTop='10px';
+    top.appendChild(status);
+
+    const container = el('div','sliceContainer');
+    container.style.cssText += ';flex-direction:column;margin-top:6px;';
+    const blocks = [];
     for(let g=0;g<4;g++){
-      const holder = el('div'); holders.push(holder);
+      const shardData = [W[2*g], W[2*g+1]];
+      const blockEl = mtx(shardData, {small:true});
+      container.appendChild(blockEl);
+      blocks.push(blockEl);
+    }
+    top.appendChild(container);
+    top.appendChild(el('div','caption','W (8x8 stand-in): watch the horizontal cut lines split W into 4 row blocks'));
+    body.appendChild(top);
+
+    const row = el('div','row'); row.style.marginTop='22px';
+    const holders=[];
+    const gpuBoxes=[];
+    for(let g=0;g<4;g++){
+      const holder = el('div','col');
+      const mb = el('div','membar'); mb.style.width='80px'; const mf = el('div'); mb.appendChild(mf);
+      holder.appendChild(mb);
       const bx = gpuBox(g, holder);
       bx.appendChild(el('div','caption',`row shard: 2x8 = 16 numbers<br>(rows ${2*g}-${2*g+1})`));
       row.appendChild(bx);
+      holders.push(holder);
+      gpuBoxes.push({bx, mf});
     }
     body.appendChild(row);
+
     (async()=>{
-      await sleep(600); if(!alive(id)) return;
-      wm.querySelectorAll('.cell').forEach(cell=>{
-        const g = Math.floor(cell.dataset.r/2);
-        paint(cell,g);
+      await sleep(700); if(!alive(id)) return;
+
+      // Phase 2: Slicing horizontally into 4 row slabs
+      status.textContent = '2. Slicing horizontally into four 2x8 row blocks';
+      status.classList.add('active');
+      container.style.gap = '14px';
+      blocks.forEach((b,g)=>{
+        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+        b.classList.add('flash');
       });
-      await sleep(1100); if(!alive(id)) return;
+      await sleep(1400); if(!alive(id)) return;
+
+      // Phase 3: Loading into GPUs
+      status.textContent = '3. Loading 2x8 row shards into GPU memory';
       for(let g=0;g<4;g++){
         if(!alive(id)) return;
-        wm.querySelectorAll('.cell').forEach(cell=>{ if(Math.floor(cell.dataset.r/2)===g) cell.classList.add('dimmed'); });
-        const shard = [W[2*g], W[2*g+1]];
-        const sm = mtx(shard,{colorOf:()=>g, small:true}); sm.classList.add('fadeIn');
-        holders[g].appendChild(sm);
-        await sleep(450);
+        gpuBoxes[g].bx.classList.add('active');
+        blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+        const shardData = [W[2*g], W[2*g+1]];
+        const sm = mtx(shardData, {colorOf:()=>g, small:true});
+        sm.classList.add('fadeIn');
+        holders[g].insertBefore(sm, holders[g].firstChild);
+        gpuBoxes[g].mf.style.width = '83%';
+        await sleep(500);
+        gpuBoxes[g].bx.classList.remove('active');
       }
+
+      // Phase 4: Complete
+      if(!alive(id)) return;
+      status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (rows 2i to 2i+1)';
+      status.classList.remove('active');
     })();
   }
 });
