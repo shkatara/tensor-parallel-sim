@@ -1772,6 +1772,47 @@ P2.push({
     mlpBox.appendChild(mlpSyncTag);
     flowWrap.appendChild(mlpBox);
 
+    // Layer Anatomy Card
+    const card = el('div','modelCard');
+    card.style.cssText += ';width:100%;max-width:880px;padding:16px 20px;';
+    card.appendChild(el('h3','','Layer Anatomy: The 6 Primary Weight Matrices'));
+    const cardContent = el('div'); cardContent.style.cssText='display:flex;flex-direction:column;gap:12px;font-size:12.5px;';
+    
+    // Att section
+    const sec1 = el('div'); sec1.style.cssText='border-bottom:1px solid var(--line2);padding-bottom:10px;';
+    sec1.appendChild(el('div','caption','<b>1. Self-Attention Block (Word-to-word relationships)</b>'));
+    const g1 = el('div'); g1.style.cssText='display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;align-items:center;margin-top:6px;';
+    g1.innerHTML = `
+      <code>W_Q, W_K, W_V</code>
+      <span>Project token into Query, Key, Value heads to measure context scores.</span>
+      <span class="chip" style="border-color:var(--accent);color:var(--accent);font-size:9.5px;">Column Cut</span>
+      <code>W_O</code>
+      <span>Output Projection: Combines computed attention heads into one vector.</span>
+      <span class="chip" style="border-color:var(--dim);font-size:9.5px;">Row Cut</span>
+    `;
+    sec1.appendChild(g1);
+    sec1.appendChild(el('div','caption','└─> <b>Sync Point #1:</b> 1 AllReduce sum across NVLink mesh'));
+    cardContent.appendChild(sec1);
+
+    // MLP section
+    const sec2 = el('div');
+    sec2.appendChild(el('div','caption','<b>2. MLP Block (Multi-Layer Perceptron / Factual knowledge)</b>'));
+    const g2 = el('div'); g2.style.cssText='display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;align-items:center;margin-top:6px;';
+    g2.innerHTML = `
+      <code>W_up, W_gate</code>
+      <span>Expands vector width (4096 -> 14,336) to activate isolated factual concepts.</span>
+      <span class="chip" style="border-color:var(--accent);color:var(--accent);font-size:9.5px;">Column Cut</span>
+      <code>W_down</code>
+      <span>Down Projection: Compresses activated features back into standard width (14,336 -> 4096).</span>
+      <span class="chip" style="border-color:var(--dim);font-size:9.5px;">Row Cut</span>
+    `;
+    sec2.appendChild(g2);
+    sec2.appendChild(el('div','caption','└─> <b>Sync Point #2:</b> 1 AllReduce sum across NVLink mesh'));
+    cardContent.appendChild(sec2);
+
+    card.appendChild(cardContent);
+    flowWrap.appendChild(card);
+
     const check = el('div','caption','');
     check.style.marginTop='4px';
     flowWrap.appendChild(check);
