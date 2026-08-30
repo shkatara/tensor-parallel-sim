@@ -990,68 +990,140 @@ P2.push({
 /* ---- 2.6 row-parallel compute ---- */
 P2.push({
   title:'Row-Parallel compute: 4 GPUs multiply row slices by 2x8 shards',
-  text:`<h2>Step 1 of Row Parallelism: Partial Sums</h2>
-    <p>Now consider the second cut: <b>Row Sharding</b>. GPU i holds rows 2i to 2i+1 of W (a 2x8 block).</p>
-    <p>For all 3 prompt tokens ("The", "cat", "sat"), each GPU only needs the 2 column entries of X matching its row indices. Each GPU receives a <b>3x2 slice of X</b> and multiplies it by its <b>2x8 shard of W</b>.</p>
+  text:`<h2>Step 1 of Row Parallelism: Slicing X and W</h2>
+    <p>Watch the animation: <b>both</b> matrices are sliced to match each GPU:</p>
+    <p>1. <b>Input X (3x8)</b> is sliced <i>vertically</i> into four <b>3x2 slices</b> (GPU 0 gets cols 0-1, GPU 1 gets cols 2-3, etc.).</p>
+    <p>2. <b>Weight W (8x8)</b> is sliced <i>horizontally</i> into four <b>2x8 shards</b> (GPU 0 gets rows 0-1, GPU 1 gets rows 2-3, etc.).</p>
     <p>Each GPU computes: <code>(3x2) · (2x8)</code> -> a <b>3x8 partial output matrix</b> (one partial row per prompt token).</p>
-    <p>This 3x8 matrix is a <b>partial sum</b> because each GPU only held 2 of the 8 terms required for each dot product.</p>
-    <div class="key">Notice: All 3 prompt tokens compute simultaneously across all 4 GPUs. Next step: how do we sum the partial matrices?</div>`,
+    <div class="key"><b>Why the dimensions match:</b> A <code>3x2</code> matrix multiplied by a <code>2x8</code> matrix produces a <code>3x8</code> matrix. Each GPU computes 2 out of the 8 required terms per cell.</div>`,
   setup(body, id){
-    const bc = el('div','col');
-    const xFull = mtx(E, {small:true});
-    xFull.querySelectorAll('.cell').forEach(paintInk);
-    bc.appendChild(xFull);
-    bc.appendChild(el('div','caption','X (3x8 prompt: "The", "cat", "sat"): watch columns 2i to 2i+1 slice out to GPU i ↓'));
-    body.appendChild(bc);
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='920px';
 
-    const row = el('div','row'); row.style.marginTop='14px';
+    const status = el('div','statusBadge','1. Source: Input X (3x8) and Weight Matrix W (8x8)');
+    wrap.appendChild(status);
+
+    // Source Row: Input X on left, Weight W on right
+    const srcRow = el('div','row'); srcRow.style.gap='20px'; srcRow.style.alignItems='center';
+
+    // X Container with 4 column blocks
+    const xCol = el('div','col');
+    xCol.appendChild(el('div','caption','Input X (3x8 prompt: "The", "cat", "sat")'));
+    const xContainer = el('div','sliceContainer');
+    const xBlocks = [];
+    for(let g=0;g<4;g++){
+      const sliceData = E.map(row=>[row[2*g], row[2*g+1]]);
+      const b = mtx(sliceData, {small:true});
+      b.querySelectorAll('.cell').forEach(paintInk);
+      xContainer.appendChild(b);
+      xBlocks.push(b);
+    }
+    xCol.appendChild(xContainer);
+    xCol.appendChild(el('div','caption','cols 0-1 | cols 2-3 | cols 4-5 | cols 6-7'));
+    srcRow.appendChild(xCol);
+
+    srcRow.appendChild(el('div','eq','×'));
+
+    // W Container with 4 row slabs
+    const wCol = el('div','col');
+    wCol.appendChild(el('div','caption','Weight W (8x8 stand-in)'));
+    const wContainer = el('div','sliceContainer');
+    wContainer.style.flexDirection = 'column';
+    const wBlocks = [];
+    for(let g=0;g<4;g++){
+      const shardData = [W[2*g], W[2*g+1]];
+      const b = mtx(shardData, {small:true});
+      wContainer.appendChild(b);
+      wBlocks.push(b);
+    }
+    wCol.appendChild(wContainer);
+    wCol.appendChild(el('div','caption','rows 0-1 / rows 2-3 / rows 4-5 / rows 6-7'));
+    srcRow.appendChild(wCol);
+
+    wrap.appendChild(srcRow);
+
+    // Dispatch Arrow
+    const dispatchCol = el('div','col'); dispatchCol.style.alignItems='center'; dispatchCol.style.marginTop='2px';
+    const dispatchTag = el('div','tag','↓↓ Slices descend into GPU 0, GPU 1, GPU 2, GPU 3 in parallel ↓↓');
+    dispatchTag.style.cssText += ';font-size:11px;padding:5px 16px;transition:all .4s;';
+    dispatchCol.appendChild(dispatchTag);
+    wrap.appendChild(dispatchCol);
+
+    // 4 GPU boxes below
+    const gpuRow = el('div','row'); gpuRow.style.gap='10px'; gpuRow.style.marginTop='4px';
     const parts=[];
     for(let g=0;g<4;g++){
-      const inner = el('div','col');
-      const topOp = el('div','row'); topOp.style.cssText='gap:6px;align-items:center;';
+      const inner = el('div','col'); inner.style.gap='6px';
+      
+      const topOp = el('div','row'); topOp.style.cssText='gap:4px;align-items:center;';
       const xs = mtx(E.map(()=>['','']), {small:true});
-      const xsCol = el('div','col'); xsCol.appendChild(xs); xsCol.appendChild(el('div','caption',`X slice (3x2)<br>(cols ${2*g}-${2*g+1})`));
+      const xsCol = el('div','col'); xsCol.appendChild(xs); xsCol.appendChild(el('div','caption',`X slice (3x2)`));
       topOp.appendChild(xsCol);
       topOp.appendChild(el('div','plus','×'));
-      const sm = mtx([W[2*g], W[2*g+1]],{colorOf:()=>g, small:true});
-      const smCol = el('div','col'); smCol.appendChild(sm); smCol.appendChild(el('div','caption',`shard (2x8)<br>(rows ${2*g}-${2*g+1})`));
+      const sm = mtx([[ '','','','','','','',''],[ '','','','','','','','']],{colorOf:()=>g, small:true});
+      const smCol = el('div','col'); smCol.appendChild(sm); smCol.appendChild(el('div','caption',`W shard (2x8)`));
       topOp.appendChild(smCol);
       inner.appendChild(topOp);
 
       inner.appendChild(el('div','arrow','↓'));
       const pm = mtx(E.map(()=>Array(8).fill('')),{small:true});
       inner.appendChild(pm);
-      inner.appendChild(el('div','caption','partial Y (3x8: all 3 tokens)'));
+      inner.appendChild(el('div','caption',`partial Y (3x8)`));
       const cnt = el('div','counter','<b>0</b>/48 MACs');
       inner.appendChild(cnt);
 
       const bx = gpuBox(g, inner);
-      row.appendChild(bx);
+      gpuRow.appendChild(bx);
       parts.push({pm, xs, sm, cnt, bx, g});
     }
-    body.appendChild(row);
-    body.appendChild(el('div','bigNote','Each GPU computes a full 3x8 matrix for all 3 tokens, but each cell is missing terms from the other 6 rows. Next step: how do we sum them?'));
+    wrap.appendChild(gpuRow);
+    body.appendChild(wrap);
 
     (async()=>{
-      await sleep(500); if(!alive(id)) return;
-      const srcCells = xFull.querySelectorAll('.cell');
-      for(const p of parts){
+      await sleep(600); if(!alive(id)) return;
+
+      // Phase 2: Slicing X and W
+      status.textContent = '2. Slicing X vertically into 3x2 slices, and W horizontally into 2x8 shards';
+      status.classList.add('active');
+      xContainer.style.gap = '10px';
+      wContainer.style.gap = '8px';
+      xBlocks.forEach((b,g)=>{
+        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+        b.classList.add('flash');
+      });
+      wBlocks.forEach((b,g)=>{
+        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+        b.classList.add('flash');
+      });
+      await sleep(1400); if(!alive(id)) return;
+
+      // Phase 3: Moving into GPUs
+      status.textContent = '3. Dispatch: Slices move into GPU 0, 1, 2, 3 in parallel';
+      dispatchTag.style.background = INK; dispatchTag.style.color = ONINK; dispatchTag.style.borderColor = INK;
+      for(let g=0; g<4; g++){
         if(!alive(id)) return;
+        const p = parts[g];
         p.bx.classList.add('active');
-        for(let t=0;t<3;t++){
-          for(let i=0;i<2;i++){
-            const srcIdx = t*8 + (2*p.g + i);
-            paint(srcCells[srcIdx], p.g); srcCells[srcIdx].classList.add('flash');
-            const targetCell = p.xs.querySelectorAll('.cell')[t*2 + i];
-            targetCell.textContent = E[t][2*p.g + i];
-            paint(targetCell, p.g); targetCell.classList.add('flash');
-          }
+        // Populate X slice
+        for(let t=0; t<3; t++) for(let c=0; c<2; c++){
+          const cell = p.xs.querySelectorAll('.cell')[t*2 + c];
+          cell.textContent = E[t][2*g + c];
+          paint(cell, g);
+          cell.classList.add('flash');
+        }
+        // Populate W shard
+        for(let r=0; r<2; r++) for(let c=0; c<8; c++){
+          const cell = p.sm.querySelectorAll('.cell')[r*8 + c];
+          cell.textContent = W[2*g + r][c];
+          paint(cell, g);
+          cell.classList.add('flash');
         }
         await sleep(350);
       }
       await sleep(400); if(!alive(id)) return;
 
-      for(let c=0;c<8;c++){
+      // Phase 4: Parallel multiplication
+      status.textContent = '4. Parallel Math: 4 GPUs multiply (3x2) · (2x8) in parallel -> Each produces a 3x8 partial matrix';
+      for(let c=0; c<8; c++){
         if(!alive(id)) return;
         parts.forEach(p=>{
           p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
@@ -1059,7 +1131,7 @@ P2.push({
         });
         await sleep(220); if(!alive(id)) return;
         parts.forEach(p=>{
-          for(let t=0;t<3;t++){
+          for(let t=0; t<3; t++){
             const cell = p.pm.querySelectorAll('.cell')[t*8 + c];
             cell.textContent = rowPartialM[p.g][t][c];
             paint(cell, p.g);
@@ -1073,6 +1145,9 @@ P2.push({
         p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
         p.bx.classList.remove('active');
       });
+
+      status.textContent = 'Complete: 4 GPUs produced four 3x8 partial matrices simultaneously';
+      status.classList.remove('active');
     })();
   }
 });
