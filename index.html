@@ -165,6 +165,15 @@
   .nvlinkBranchWire{width:3px; height:18px; background:var(--line2); transition:all .3s;}
   .nvlinkBranchWire.active{background:var(--accent); box-shadow:0 0 8px var(--accent);}
 
+  /* ---------- KV Cache & Decode Visuals ---------- */
+  .kvTable{display:flex; flex-direction:column; gap:4px; border:1px solid var(--line2); border-radius:2px; padding:6px; background:var(--panel2);}
+  .kvHeadRow{display:flex; gap:3px;}
+  .kvHeadCell{padding:3px 6px; font-size:10px; font-family:var(--mono); border:1px solid var(--line2); border-radius:2px; text-align:center; transition:all .3s;}
+  .tokenStream{display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line2); border-radius:2px; min-height:44px;}
+  .tokenPill{font-family:var(--mono); font-size:12px; padding:4px 10px; border-radius:2px; background:var(--panel2); border:1px solid var(--line2); transition:all .3s;}
+  .tokenPill.new{background:var(--ink); color:var(--onInk); border-color:var(--ink); box-shadow:0 0 10px rgba(168,64,26,.3); transform:scale(1.05);}
+  .tokenPill.prompt{background:var(--accentWash); color:var(--accent); border-color:var(--accent);}
+
   /* ---------- mobile / tablet ---------- */
   @media (max-width: 900px){
     header{padding:12px 14px; gap:10px; flex-direction:column; align-items:stretch;}
@@ -221,10 +230,11 @@
 </head>
 <body>
 <header>
-  <h1>Tensor Parallelism <span>· Qwen3-235B-A22B on 4 GPUs · prefill &amp; time-to-first-token</span></h1>
+  <h1>Tensor Parallelism <span>· Qwen3-235B-A22B on 4 GPUs · prefill, decode &amp; KV cache</span></h1>
   <div class="tabs">
     <button class="tab" id="tab1">Part 1 · Loading &amp; Sharding</button>
     <button class="tab" id="tab2">Part 2 · Prefill &amp; AllReduce</button>
+    <button class="tab" id="tab3">Part 3 · Decode &amp; KV Cache</button>
   </div>
   <button class="themeBtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle light or dark theme"></button>
 </header>
@@ -436,11 +446,12 @@ function render(){
   explain.innerHTML = s.text;
   document.getElementById('tab1').classList.toggle('active', state.part===1);
   document.getElementById('tab2').classList.toggle('active', state.part===2);
+  document.getElementById('tab3').classList.toggle('active', state.part===3);
   document.getElementById('stepLabel').textContent = `Part ${state.part} · Step ${state.step+1}/${steps.length}`;
   const dots = document.getElementById('dots'); dots.innerHTML='';
   steps.forEach((_,i)=>{ const d=el('div','dot'+(i===state.step?' on':'')); d.onclick=()=>{state.step=i; render();}; dots.appendChild(d); });
   document.getElementById('prevBtn').disabled = (state.part===1 && state.step===0);
-  const last = (state.part===2 && state.step===steps.length-1);
+  const last = (state.part===3 && state.step===steps.length-1);
   document.getElementById('nextBtn').textContent = last ? 'Done ✓' : 'Next →';
   document.getElementById('nextBtn').disabled = last;
   const body = el('div');
@@ -451,16 +462,19 @@ document.getElementById('nextBtn').onclick = ()=>{
   const steps = PARTS[state.part];
   if(state.step < steps.length-1){ state.step++; }
   else if(state.part===1){ state.part=2; state.step=0; }
+  else if(state.part===2){ state.part=3; state.step=0; }
   render();
 };
 document.getElementById('prevBtn').onclick = ()=>{
   if(state.step>0){ state.step--; }
   else if(state.part===2){ state.part=1; state.step=PARTS[1].length-1; }
+  else if(state.part===3){ state.part=2; state.step=PARTS[2].length-1; }
   render();
 };
 document.getElementById('replayBtn').onclick = render;
 document.getElementById('tab1').onclick = ()=>{state.part=1; state.step=0; render();};
 document.getElementById('tab2').onclick = ()=>{state.part=2; state.step=0; render();};
+document.getElementById('tab3').onclick = ()=>{state.part=3; state.step=0; render();};
 
 /* ================= theme toggle ================= */
 const themeBtn = document.getElementById('themeBtn');
@@ -2089,7 +2103,573 @@ P2.push({
   }
 });
 
-const PARTS = {1:P1, 2:P2};
+/* ================= PART 3: DECODE & KV CACHE ================= */
+const P3 = [];
+
+/* ---- 3.1 Detective Notebook Analogy ---- */
+P3.push({
+  title:'The Detective\'s Notebook: Why we need the KV Cache',
+  text:`<h2>The mystery of generating word 101</h2>
+    <p>Imagine a detective reading a 100-page mystery. To write page 101, the detective must understand all 100 previous pages.</p>
+    <p><b>Option A: WITHOUT a KV Cache (The Slow Disaster)</b><br>
+    To generate word 101, re-read all 100 previous words from scratch through the 94 layers of weight magnifying glasses (W). To generate word 102, re-read 101 words. This creates quadratic O(N²) slowdown where generation grinds to a halt.</p>
+    <p><b>Option B: WITH a KV Cache (The Smart Solution)</b><br>
+    During Prefill, as prompt words pass through W_K and W_V, the detective writes summary notes in a pocket notebook:</p>
+    <p>• <b>Key (K):</b> What is each word about? (Topic tag)<br>
+       • <b>Value (V):</b> What information does each word hold? (Clue content)</p>
+    <div class="key"><b>When word 101 arrives:</b> You multiply <b>ONLY word 100</b> through the 94 layers (1x4096). Word 100 writes its note, asks a question (<b>Query Q</b>), and glances at the notebook (<b>KV Cache</b> in RAM) in one fast read. Past words are <b>never re-computed!</b></div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. Scenario: Prompt has 99 words already read. Generating Word 100.');
+    wrap.appendChild(status);
+
+    const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
+
+    // Option A: Without KV Cache
+    const boxA = el('div','col'); boxA.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    boxA.appendChild(el('div','caption','<b>WITHOUT KV Cache: Slow Re-Reading</b>'));
+    const stackA = el('div','col'); stackA.style.gap='3px';
+    const tagA = el('div','tag','Re-computing 100 words through 94 layers (100 matmuls!)');
+    tagA.style.cssText+=';font-size:10px;padding:4px 8px;border-color:var(--accent);color:var(--accent);';
+    stackA.appendChild(tagA);
+    const mtxA = mtx(Array.from({length:6},()=>Array(8).fill('')), {small:true});
+    mtxA.querySelectorAll('.cell').forEach(c=>c.classList.add('dimmed'));
+    stackA.appendChild(mtxA);
+    stackA.appendChild(el('div','caption','⋮ (all 100 words re-calculated) ⋮'));
+    boxA.appendChild(stackA);
+    compRow.appendChild(boxA);
+
+    // Option B: With KV Cache
+    const boxB = el('div','col'); boxB.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    boxB.appendChild(el('div','caption','<b>WITH KV Cache: Detective\'s Notebook</b>'));
+    
+    const nb = el('div','kvTable');
+    nb.appendChild(el('div','caption','<b>Pocket Notebook (KV Cache in RAM)</b>'));
+    const nbMtx = mtx(Array.from({length:3},()=>Array(8).fill('')), {small:true});
+    nbMtx.querySelectorAll('.cell').forEach(paintInk);
+    nb.appendChild(nbMtx);
+    nb.appendChild(el('div','caption','99 past words cached (0 re-compute)'));
+    boxB.appendChild(nb);
+
+    const newTokCol = el('div','col'); newTokCol.style.alignItems='center';
+    const newVec = mtx([[ '1','2','0','1','2','1','1','0' ]], {small:true});
+    newVec.querySelectorAll('.cell').forEach(c=>{ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; });
+    newTokCol.appendChild(el('div','caption','<b>Only 1 new vector (1x4096) enters layer:</b>'));
+    newTokCol.appendChild(newVec);
+    boxB.appendChild(newTokCol);
+
+    compRow.appendChild(boxB);
+    wrap.appendChild(compRow);
+
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    wrap.appendChild(check);
+
+    const foot = el('div','bigNote','With KV cache, compute cost per word stays constant at <b>1 token</b> instead of ballooning to 100, 500, or 4000 tokens!');
+    wrap.appendChild(foot);
+    body.appendChild(wrap);
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. The Bottleneck',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '1. Without KV cache: Every word forces a full re-read of all previous words';
+            status.classList.remove('active');
+            boxA.style.borderColor='var(--accent)';
+            boxB.style.borderColor='var(--line2)';
+            mtxA.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: '2. The Notebook',
+          delay: 1500,
+          run: async () => {
+            status.textContent = '2. With KV Cache: Past 99 words sit as notes in RAM. Only 1 new vector enters layer!';
+            status.classList.add('active');
+            boxA.style.borderColor='var(--line2)';
+            boxB.style.borderColor='var(--accent)';
+            nbMtx.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            newVec.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+          }
+        },
+        {
+          name: '3. Instant Read',
+          delay: 1500,
+          run: async () => {
+            status.textContent = '3. Query vector does 1 quick dot product against notebook in RAM -> Next word emitted!';
+            check.innerHTML = `Word 100 generated instantly in 1 step! Zero past words re-calculated <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.2 Slicing KV Cache on 4 GPUs ---- */
+P3.push({
+  title:'Slicing the KV Cache: How 4 GPUs divide the notebook',
+  text:`<h2>Partitioning the notebook across 4 GPUs</h2>
+    <p>Because W_K and W_V are <b>Column-Cut</b>, each GPU calculates and stores <b>only its share of attention heads</b>.</p>
+    <p>If the model has 32 attention heads total:</p>
+    <p>• <b>GPU 0:</b> Stores KV Cache for <b>Heads 0 to 7</b><br>
+       • <b>GPU 1:</b> Stores KV Cache for <b>Heads 8 to 15</b><br>
+       • <b>GPU 2:</b> Stores KV Cache for <b>Heads 16 to 23</b><br>
+       • <b>GPU 3:</b> Stores KV Cache for <b>Heads 24 to 31</b></p>
+    <div class="key"><b>4x Memory Footprint Reduction:</b> The total KV cache memory is cut into 4 equal slices. If a 128k context window requires 32 GB of KV cache, each GPU only needs to store <b>8 GB</b> in its VRAM!</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. Total Model: 32 Attention Heads (32 GB total KV cache)');
+    wrap.appendChild(status);
+
+    // Host 32 heads overview
+    const hostRow = el('div','col'); hostRow.style.alignItems='center'; hostRow.style.gap='4px';
+    hostRow.appendChild(el('div','caption','<b>Total 32 Attention Heads in Model:</b>'));
+    const headsGrid = el('div','kvHeadRow');
+    const headBoxes = [];
+    for(let h=0; h<32; h++){
+      const g = Math.floor(h/8);
+      const hb = el('div','kvHeadCell', `H${h}`);
+      headsGrid.appendChild(hb);
+      headBoxes.push({hb, g});
+    }
+    hostRow.appendChild(headsGrid);
+    wrap.appendChild(hostRow);
+
+    const splitTag = el('div','tag','↓↓ Column Cut splits 32 heads evenly: 8 heads per GPU ↓↓');
+    splitTag.style.cssText += ';font-size:11px;padding:5px 14px;transition:all .3s;margin:0 auto;';
+    wrap.appendChild(splitTag);
+
+    // 4 GPU KV Cache Boxes
+    const gpuRow = el('div','row'); gpuRow.style.gap='10px';
+    const gpuCards = [];
+    for(let g=0; g<4; g++){
+      const inner = el('div','col'); inner.style.gap='6px';
+      inner.appendChild(el('div','caption',`<b>Heads ${g*8}-${g*8+7}</b> (8 heads)`));
+      
+      const kvGrid = el('div','kvTable');
+      const sampleM = mtx(Array.from({length:3},()=>Array(4).fill('')), {colorOf:()=>g, small:true});
+      kvGrid.appendChild(sampleM);
+      inner.appendChild(kvGrid);
+
+      const mem = el('div','membar'); mem.style.width='80px';
+      const mf = el('div'); mem.appendChild(mf);
+      inner.appendChild(mem);
+      inner.appendChild(el('div','caption',`<b>8 GB</b> KV Cache`));
+
+      const bx = gpuBox(g, inner);
+      gpuRow.appendChild(bx);
+      gpuCards.push({bx, mf, sampleM, g});
+    }
+    wrap.appendChild(gpuRow);
+
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    wrap.appendChild(check);
+
+    body.appendChild(wrap);
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. 32 Heads Total',
+          delay: 1200,
+          run: async () => {
+            status.textContent = '1. Total Model: 32 Attention Heads (32 GB total KV cache on 1 GPU)';
+            status.classList.remove('active');
+            splitTag.style.background=''; splitTag.style.color=''; splitTag.style.borderColor='';
+            headBoxes.forEach(({hb})=>{ hb.style.background=''; hb.style.borderColor=''; hb.style.color=''; });
+            gpuCards.forEach(c=>{ c.bx.classList.remove('active'); c.mf.style.width='0%'; });
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: '2. Slicing 4 Ways',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '2. Slicing 32 heads into 4 shards: 8 heads assigned to each GPU';
+            status.classList.add('active');
+            splitTag.style.background=INK; splitTag.style.color=ONINK; splitTag.style.borderColor=INK;
+            headBoxes.forEach(({hb, g})=>{
+              hb.style.background=GT[g]; hb.style.borderColor=GB[g]; hb.style.color=GC[g];
+              hb.classList.add('flash');
+            });
+          }
+        },
+        {
+          name: '3. Sharded KV Cache',
+          delay: 1500,
+          run: async () => {
+            status.textContent = '3. Each GPU stores only its 8-head KV Cache slice in local VRAM (8 GB / GPU)';
+            gpuCards.forEach(c=>{
+              c.bx.classList.add('active');
+              c.mf.style.width='25%';
+              c.sampleM.querySelectorAll('.cell').forEach(cell=>cell.classList.add('flash'));
+            });
+            check.innerHTML = `All 4 GPUs hold independent 8-head KV slices. Total KV cache memory per GPU cut to 1/4th <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.3 One Decode Step ---- */
+P3.push({
+  title:'One Decode Step: Generating 1 Token on 4 GPUs',
+  text:`<h2>The 7-step hardware cycle for one new word</h2>
+    <p>Watch what happens across the 4 GPUs when generating Token 4 (word: "on"):</p>
+    <p>1. <b>Broadcast single vector:</b> Input x (1x4096) arrives on all 4 GPUs.<br>
+       2. <b>Compute local QKV:</b> Each GPU computes a (1x1024) slice of Q, K, V.<br>
+       3. <b>Append to Cache:</b> Each GPU appends its new K and V to its local KV Cache column.<br>
+       4. <b>Local Attention:</b> Local Q attends to local KV Cache history.<br>
+       5. <b>Sync #1:</b> W_O (Row Cut) combines heads -> <b>1 AllReduce over NVLink</b>.<br>
+       6. <b>Sync #2:</b> W_up -> W_down (MLP) runs on the 1 token -> <b>1 AllReduce over NVLink</b>.<br>
+       7. <b>Emit Token:</b> Next token is selected!</p>
+    <div class="key"><b>Notice the payload:</b> In decode, the GPUs only exchange tiny 1x4096 vectors over NVLink (a fraction of a microsecond).</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='14px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. Input: Single token vector x (1x8) arrives on all 4 GPUs');
+    wrap.appendChild(status);
+
+    // Top: Single Token Input
+    const inCol = el('div','col'); inCol.style.alignItems='center';
+    inCol.appendChild(el('div','caption','New Token Input x (1x8 stand-in: word "sat")'));
+    const inVec = mtx([[ '1','2','0','1','2','1','1','0' ]], {small:true});
+    inVec.querySelectorAll('.cell').forEach(paintInk);
+    inCol.appendChild(inVec);
+    wrap.appendChild(inCol);
+
+    // 4 GPUs Decode Execution Row
+    const gpuRow = el('div','row'); gpuRow.style.gap='8px';
+    const cards = [];
+    for(let g=0; g<4; g++){
+      const inner = el('div','col'); inner.style.gap='4px';
+      
+      const qkvChip = el('div','chip',`1. Q,K,V <small style="opacity:.8">(1x2)</small>`);
+      inner.appendChild(qkvChip);
+
+      const cacheBox = el('div','kvTable');
+      cacheBox.appendChild(el('div','caption','KV Cache (+new)'));
+      const cacheM = mtx(Array.from({length:3},()=>Array(3).fill('')), {colorOf:()=>g, small:true});
+      cacheBox.appendChild(cacheM);
+      inner.appendChild(cacheBox);
+
+      const mlpChip = el('div','chip',`2. MLP <small style="opacity:.8">(1 tok)</small>`);
+      inner.appendChild(mlpChip);
+
+      const bx = gpuBox(g, inner);
+      gpuRow.appendChild(bx);
+      cards.push({bx, qkvChip, mlpChip, cacheM, cacheBox, g});
+    }
+    wrap.appendChild(gpuRow);
+
+    // Interconnect Mesh
+    const mesh = el('div','nvlinkMesh');
+    const spine = el('div','nvlinkBusSpine');
+    const pulse = el('div','nvlinkBusPulse'); spine.appendChild(pulse);
+    mesh.appendChild(spine);
+    const syncTag = el('div','nvlinkMeshBadge','NVLink: Sync Point #1 (Attention) -> Sync Point #2 (MLP)');
+    mesh.appendChild(syncTag);
+    wrap.appendChild(mesh);
+
+    // Output Token Box
+    const outBox = el('div','col'); outBox.style.alignItems='center';
+    const outTok = el('div','tokOut','NEXT TOKEN PRODUCED -> "on"');
+    outTok.style.opacity='0';
+    outBox.appendChild(outTok);
+    wrap.appendChild(outBox);
+
+    body.appendChild(wrap);
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Broadcast Input',
+          delay: 1200,
+          run: async () => {
+            status.textContent = '1. Broadcast: Single token vector x (1x8) arrives on all 4 GPUs';
+            status.classList.remove('active');
+            inVec.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            cards.forEach(c=>{
+              c.bx.classList.remove('active');
+              c.qkvChip.style.borderColor=''; c.qkvChip.style.color='';
+              c.mlpChip.style.borderColor=''; c.mlpChip.style.color='';
+            });
+            pulse.style.width='0%';
+            outTok.style.opacity='0';
+          }
+        },
+        {
+          name: '2. QKV & Cache Append',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '2. Math: 4 GPUs compute local QKV slices and append to local KV Cache';
+            status.classList.add('active');
+            cards.forEach(c=>{
+              c.bx.classList.add('active');
+              c.qkvChip.style.borderColor='var(--accent)'; c.qkvChip.style.color='var(--accent)';
+              c.cacheM.querySelectorAll('.cell').forEach(cell=>cell.classList.add('flash'));
+            });
+          }
+        },
+        {
+          name: '3. Sync #1 (Attention)',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '3. Sync #1: 4 GPUs do AllReduce over NVLink to sum Attention heads';
+            pulse.style.width='50%';
+            syncTag.textContent = 'Sync #1: Attention AllReduce across NVLink (~900 GB/s)';
+          }
+        },
+        {
+          name: '4. MLP & Sync #2',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '4. MLP Math + Sync #2: 4 GPUs run MLP on 1 token -> AllReduce #2';
+            cards.forEach(c=>{
+              c.mlpChip.style.borderColor='var(--accent)'; c.mlpChip.style.color='var(--accent)';
+            });
+            pulse.style.width='100%';
+            syncTag.textContent = 'Sync #2: MLP AllReduce across NVLink (~900 GB/s)';
+          }
+        },
+        {
+          name: '5. Emit Next Token',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '5. Complete: Next word "on" produced! Appended to sequence for next step';
+            outTok.style.opacity='1';
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.4 Autoregressive Generation Loop ---- */
+P3.push({
+  title:'The Autoregressive Loop: Streaming tokens one-by-one',
+  text:`<h2>Watching the sequence grow in real time</h2>
+    <p>The prompt was: <code>"The cat sat"</code> (Tokens 1, 2, 3).</p>
+    <p>Now watch the generation loop run 4 consecutive decode steps:</p>
+    <p>• Step 1: Input "sat" -> outputs <b>"on"</b> (KV Cache length = 4)<br>
+       • Step 2: Input "on" -> outputs <b>"the"</b> (KV Cache length = 5)<br>
+       • Step 3: Input "the" -> outputs <b>"mat"</b> (KV Cache length = 6)<br>
+       • Step 4: Input "mat" -> outputs <b>"."</b> (KV Cache length = 7)</p>
+    <div class="key"><b>Dynamic Cache Growth:</b> With every new token emitted, exactly 1 column is added to each GPU's KV Cache. The cache grows dynamically in VRAM until the sentence ends.</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. Initial State: Prompt tokens cached in GPU memory (len = 3)');
+    wrap.appendChild(status);
+
+    // Token stream
+    const streamBox = el('div','col');
+    streamBox.appendChild(el('div','caption','<b>Generated Output Stream:</b>'));
+    const stream = el('div','tokenStream');
+    const p1 = el('div','tokenPill prompt','The'); stream.appendChild(p1);
+    const p2 = el('div','tokenPill prompt','cat'); stream.appendChild(p2);
+    const p3 = el('div','tokenPill prompt','sat'); stream.appendChild(p3);
+    const generatedPills = [
+      el('div','tokenPill','on'),
+      el('div','tokenPill','the'),
+      el('div','tokenPill','mat'),
+      el('div','tokenPill','.')
+    ];
+    streamBox.appendChild(stream);
+    wrap.appendChild(streamBox);
+
+    // 4 GPUs Cache Growth Row
+    const gpuRow = el('div','row'); gpuRow.style.gap='8px';
+    const cacheCards = [];
+    for(let g=0; g<4; g++){
+      const inner = el('div','col'); inner.style.gap='4px';
+      const cap = el('div','caption',`<b>GPU ${g} KV Cache</b><br>(len = 3)`);
+      inner.appendChild(cap);
+      const cacheContainer = el('div','kvTable');
+      const m = mtx(Array.from({length:3},()=>Array(3).fill('')), {colorOf:()=>g, small:true});
+      cacheContainer.appendChild(m);
+      inner.appendChild(cacheContainer);
+      const bx = gpuBox(g, inner);
+      gpuRow.appendChild(bx);
+      cacheCards.push({bx, cap, cacheContainer, g});
+    }
+    wrap.appendChild(gpuRow);
+
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    wrap.appendChild(check);
+
+    body.appendChild(wrap);
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Initial State',
+          delay: 1100,
+          run: async () => {
+            status.textContent = '1. Initial: Prompt tokens "The", "cat", "sat" cached in all 4 GPUs (len = 3)';
+            status.classList.remove('active');
+            generatedPills.forEach(p=>p.remove());
+            cacheCards.forEach(c=>{
+              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 3)`;
+              c.cacheContainer.innerHTML = '';
+              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(3).fill('')), {colorOf:()=>c.g, small:true}));
+              c.bx.classList.remove('active');
+            });
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: 'Token 4: "on"',
+          delay: 1400,
+          run: async () => {
+            status.textContent = 'Step 1: Input "sat" -> Emits "on" (KV Cache expands to length 4)';
+            status.classList.add('active');
+            const pill = generatedPills[0]; pill.classList.add('new'); stream.appendChild(pill);
+            cacheCards.forEach(c=>{
+              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 4)`;
+              c.cacheContainer.innerHTML = '';
+              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(4).fill('')), {colorOf:()=>c.g, small:true}));
+              c.bx.classList.add('active');
+            });
+          }
+        },
+        {
+          name: 'Token 5: "the"',
+          delay: 1400,
+          run: async () => {
+            status.textContent = 'Step 2: Input "on" -> Emits "the" (KV Cache expands to length 5)';
+            generatedPills[0].classList.remove('new');
+            const pill = generatedPills[1]; pill.classList.add('new'); stream.appendChild(pill);
+            cacheCards.forEach(c=>{
+              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 5)`;
+              c.cacheContainer.innerHTML = '';
+              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(5).fill('')), {colorOf:()=>c.g, small:true}));
+            });
+          }
+        },
+        {
+          name: 'Token 6: "mat"',
+          delay: 1400,
+          run: async () => {
+            status.textContent = 'Step 3: Input "the" -> Emits "mat" (KV Cache expands to length 6)';
+            generatedPills[1].classList.remove('new');
+            const pill = generatedPills[2]; pill.classList.add('new'); stream.appendChild(pill);
+            cacheCards.forEach(c=>{
+              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 6)`;
+              c.cacheContainer.innerHTML = '';
+              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(6).fill('')), {colorOf:()=>c.g, small:true}));
+            });
+          }
+        },
+        {
+          name: 'Token 7: "."',
+          delay: 1400,
+          run: async () => {
+            status.textContent = 'Step 4: Input "mat" -> Emits "." (Sentence complete! KV Cache len = 7)';
+            generatedPills[2].classList.remove('new');
+            const pill = generatedPills[3]; pill.classList.add('new'); stream.appendChild(pill);
+            cacheCards.forEach(c=>{
+              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 7)`;
+              c.cacheContainer.innerHTML = '';
+              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(7).fill('')), {colorOf:()=>c.g, small:true}));
+            });
+            check.innerHTML = `Full sentence generated token-by-token: "The cat sat on the mat." <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.5 Memory Wall Race ---- */
+P3.push({
+  title:'The Memory Wall: Why Decode is Bandwidth-Bound (1 GPU vs 4 GPUs)',
+  text:`<h2>Why generating words is all about memory bandwidth</h2>
+    <p>In Prefill, you process 512 tokens at once. Every weight matrix loaded from memory is multiplied 512 times. Compute cores are 100% saturated (<b>Compute-Bound</b>).</p>
+    <p>In Decode, you process only <b>ONE token</b> (1x4096). Every weight is used <b>only once</b> and thrown away! To produce just 1 token, the GPU must sweep through all <b>470 GB of model weights</b> in memory.</p>
+    <p><b>The Math of the Memory Wall:</b></p>
+    <p>• <b>1 GPU (3.35 TB/s bandwidth):</b> Reading 470 GB takes 470 / 3.35 ≈ 140 ms per token (~7 tokens/sec).<br>
+       • <b>4 GPUs (13.4 TB/s combined bandwidth):</b> Each GPU reads only 118 GB simultaneously: 118 / 3.35 ≈ 35 ms per token (<b>~28 tokens/sec</b>).</p>
+    <div class="key"><b>The Big Takeaway:</b> Tensor Parallelism speeds up Decode by <b>~4x</b> not because the math is heavy, but because <b>4 GPUs aggregate 4x total memory bandwidth</b> (13.4 TB/s) to break through the Memory Wall!</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='24px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    
+    function makeLane(label){
+      const c = el('div','raceLane');
+      c.appendChild(el('div','caption',label)).style.textAlign='left';
+      const t = el('div','raceTrack');
+      c.appendChild(t);
+      const timer = el('div','counter','tokens generated: <b>0</b> words (0 tok/s)');
+      c.appendChild(timer);
+      const stream = el('div','tokenStream');
+      c.appendChild(stream);
+      return {c, t, timer, stream};
+    }
+
+    const l1 = makeLane('1 GPU (3.35 TB/s memory bandwidth): Reads 470 GB weights sequentially');
+    const l4 = makeLane('4 GPUs (13.4 TB/s aggregated bandwidth): Each reads 118 GB in parallel');
+    wrap.appendChild(l1.c); wrap.appendChild(l4.c);
+
+    const f1 = el('div','raceFill'); f1.style.background='var(--accent)'; l1.t.appendChild(f1);
+    const f4 = el('div','raceFill'); f4.style.background='var(--ink)'; l4.t.appendChild(f4);
+
+    const res = el('div','bigNote','');
+    wrap.appendChild(res);
+    body.appendChild(wrap);
+
+    const words = ["The","quick","brown","fox","jumps","over","the","lazy","dog","and","runs","swiftly","across","the","open","meadow","under","the","warm","sunlight","."];
+
+    const TOTAL_TIME = 7000;
+    (async()=>{
+      await sleep(400); if(!alive(id)) return;
+      const t0 = performance.now();
+      const iv = setInterval(()=>{
+        if(!alive(id)){ clearInterval(iv); return; }
+        const elapsed = performance.now() - t0;
+        const p4 = Math.min(elapsed / (TOTAL_TIME * 0.25), 1);
+        const p1 = Math.min(elapsed / TOTAL_TIME, 1);
+
+        f4.style.width = (p4 * 100) + '%';
+        f1.style.width = (p1 * 100) + '%';
+
+        const count4 = Math.floor(p4 * words.length);
+        const count1 = Math.floor(p1 * words.length);
+
+        l4.timer.innerHTML = `tokens generated: <b>${count4}</b> / ${words.length} words (<b>~28 tok/s</b>)`;
+        l1.timer.innerHTML = `tokens generated: <b>${count1}</b> / ${words.length} words (~7 tok/s)`;
+
+        l4.stream.innerHTML = '';
+        words.slice(0, count4).forEach(w=>l4.stream.appendChild(el('div','tokenPill', w)));
+
+        l1.stream.innerHTML = '';
+        words.slice(0, count1).forEach(w=>l1.stream.appendChild(el('div','tokenPill', w)));
+
+        if(p4 >= 1 && p1 >= 1){
+          clearInterval(iv);
+          res.innerHTML = `<b>Decode Speedup Payoff:</b> 4 GPUs generate text <b>~4x faster</b> (28 tok/s vs 7 tok/s) by combining 4 independent memory buses (13.4 TB/s total bandwidth) to break through the Memory Wall!`;
+        }
+      }, 50);
+    })();
+  }
+});
+
+const PARTS = {1:P1, 2:P2, 3:P3};
 render();
 </script>
 </body>
