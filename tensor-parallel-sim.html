@@ -147,6 +147,15 @@
   .statusBadge{font-family:var(--mono); font-size:11px; padding:6px 14px; border-radius:2px; background:var(--panel); border:1px solid var(--line2); color:var(--text); text-transform:uppercase; letter-spacing:.06em; min-height:30px; display:flex; align-items:center; justify-content:center; transition:all .3s;}
   .statusBadge.active{border-color:var(--accent); color:var(--accent); background:var(--warnWash); box-shadow:0 0 8px rgba(168,64,26,.15);}
 
+  /* ---------- NVLink interconnect bus ---------- */
+  .nvlinkSection{width:100%; max-width:840px; margin:6px 0; display:flex; flex-direction:column; align-items:center;}
+  .nvlinkTapsRow{display:flex; justify-content:space-around; width:100%; max-width:760px;}
+  .nvlinkTapWire{width:3px; height:16px; background:var(--line2); transition:all .3s;}
+  .nvlinkTapWire.active{background:var(--accent); box-shadow:0 0 8px var(--accent);}
+  .nvlinkSpine{width:100%; max-width:760px; height:8px; background:var(--panel2); border:1px solid var(--line2); border-radius:2px; position:relative; overflow:hidden;}
+  .nvlinkSpineFill{position:absolute; top:0; bottom:0; width:0%; background:linear-gradient(90deg,var(--g0),var(--g1),var(--g2),var(--g3)); transition:width .6s ease;}
+  .nvlinkBadge{font-family:var(--mono); font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin-top:4px;}
+
   /* ---------- mobile / tablet ---------- */
   @media (max-width: 900px){
     header{padding:12px 14px; gap:10px; flex-direction:column; align-items:stretch;}
@@ -1136,69 +1145,65 @@ P2.push({
               }
               p.cnt.innerHTML = `<b>48</b>/48 MACs`;
             });
-            tf.style.width = '25%';
-          }
-        }
-      ]
-    });
-  }
-});
-
-/* ---- 2.5 Combining results from Column-Parallel ---- */
+     /* ---- 2.5 Combining results from Column-Parallel ---- */
 P2.push({
   title:'Combining Results: How do we combine results from multiple GPUs?',
   text:`<h2>How do we combine the results from 4 GPUs?</h2>
     <p>Each GPU computed a separate 2-column strip of the output for all prompt tokens. Because each GPU worked on different columns, putting them together requires <b>zero arithmetic</b>.</p>
-    <p>We simply place the four 3x2 strips side-by-side in column order (GPU 0 gets cols 0-1, GPU 1 gets cols 2-3, GPU 2 gets cols 4-5, and GPU 3 gets cols 6-7).</p>
-    <p>In GPU networking, this operation is called an <b>AllGather</b>: all 4 GPUs share their column pieces over high-speed cables so that <b>every single GPU ends up with the complete 3x8 matrix</b>.</p>
-    <div class="key"><b>Simple Concept:</b> Just glue the column pieces side-by-side. Watch below: every GPU receives the missing columns from the others and now holds the full 3x8 matrix.</div>`,
+    <p><b>The 3-stage process:</b></p>
+    <p>1. <b>Send down NVLink:</b> All 4 GPUs stream their 3x2 column strips onto the physical <b>NVLink Interconnect</b> wires.</p>
+    <p>2. <b>Side-by-side Assembly:</b> The four strips are placed side-by-side in column order (cols 0-1, 2-3, 4-5, 6-7) to form the complete 3x8 matrix.</p>
+    <p>3. <b>Broadcast Back:</b> The assembled 3x8 matrix travels back across NVLink into <b>all four GPUs simultaneously</b>.</p>
+    <div class="key"><b>AllGather = Concatenate + Broadcast.</b> Now every GPU holds the completed 3x8 matrix, matching the 1-GPU baseline bit-for-bit.</div>`,
   setup(body, id){
-    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='920px';
+    const wrap = el('div','col'); wrap.style.gap='14px'; wrap.style.width='100%'; wrap.style.maxWidth='920px';
 
-    const status = el('div','statusBadge','1. Before exchange: Each GPU only holds its own 3x2 column strip');
+    const status = el('div','statusBadge','1. Initial: Each GPU holds its local 3x2 column strip');
     wrap.appendChild(status);
 
-    // Initial state: 4 GPUs with 3x2 strips
+    // Top GPU row: ONE set of 4 GPUs
     const topRow = el('div','row'); topRow.style.gap='10px';
-    const topGpuCards=[];
+    const gpuCards=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col'); inner.style.gap='4px';
       const tile = Array.from({length:3},(_,r)=>[YM[r][2*g], YM[r][2*g+1]]);
+      const holder = el('div');
       const tm = mtx(tile, {colorOf:()=>g, small:true});
-      inner.appendChild(tm);
-      inner.appendChild(el('div','caption',`GPU ${g} piece (3x2)<br>(cols ${2*g}-${2*g+1})`));
+      holder.appendChild(tm);
+      inner.appendChild(holder);
+      const cap = el('div','caption',`GPU ${g} piece (3x2)<br>(cols ${2*g}-${2*g+1})`);
+      inner.appendChild(cap);
       const bx = gpuBox(g, inner);
       topRow.appendChild(bx);
-      topGpuCards.push(tm);
+      gpuCards.push({bx, holder, cap, tm, g});
     }
     wrap.appendChild(topRow);
 
-    // Interconnect exchange line
-    const commCol = el('div','col'); commCol.style.alignItems='center'; commCol.style.marginTop='4px';
-    const commTag = el('div','tag','↓↓ AllGather: GPUs exchange column pieces across NVLink cables ↓↓');
-    commTag.style.cssText += ';font-size:11px;padding:5px 16px;transition:all .4s;';
-    commCol.appendChild(commTag);
-    wrap.appendChild(commCol);
-
-    // End state: 4 GPUs each holding full 3x8 matrix!
-    const bottomRow = el('div','row'); bottomRow.style.gap='10px'; bottomRow.style.marginTop='4px';
-    const bottomMatrices=[];
-    const bottomBoxes=[];
+    // Physical NVLink Interconnect Component
+    const nvlink = el('div','nvlinkSection');
+    const tapsRow = el('div','nvlinkTapsRow');
+    const tapWires = [];
     for(let g=0;g<4;g++){
-      const inner = el('div','col'); inner.style.gap='4px';
-      const fullM = mtx(E.map(()=>Array(8).fill('')), {small:true});
-      inner.appendChild(fullM);
-      inner.appendChild(el('div','caption',`<b>GPU ${g} Final Output</b><br>(complete 3x8)`));
-      const bx = gpuBox(g, inner);
-      bottomRow.appendChild(bx);
-      bottomMatrices.push(fullM);
-      bottomBoxes.push(bx);
+      const w = el('div','nvlinkTapWire');
+      tapsRow.appendChild(w);
+      tapWires.push(w);
     }
-    wrap.appendChild(bottomRow);
+    nvlink.appendChild(tapsRow);
+    const spine = el('div','nvlinkSpine');
+    const spineFill = el('div','nvlinkSpineFill');
+    spine.appendChild(spineFill);
+    nvlink.appendChild(spine);
+    nvlink.appendChild(el('div','nvlinkBadge','NVLink Interconnect (~900 GB/s bidirectional mesh)'));
+    wrap.appendChild(nvlink);
 
+    // Central Combination Stage
+    const combStage = el('div','col'); combStage.style.gap='6px'; combStage.style.alignItems='center';
+    combStage.appendChild(el('div','caption','↓↓ Column strips travel across NVLink and assemble side-by-side ↓↓'));
+    const assembledMtx = mtx(E.map(()=>Array(8).fill('')), {small:true});
+    combStage.appendChild(assembledMtx);
     const check = el('div','caption','');
-    check.style.marginTop='6px';
-    wrap.appendChild(check);
+    combStage.appendChild(check);
+    wrap.appendChild(combStage);
 
     body.appendChild(wrap);
 
@@ -1210,47 +1215,61 @@ P2.push({
           name: '1. Local Strips',
           delay: 1100,
           run: async () => {
-            status.textContent = '1. Before exchange: Each GPU only holds its own 3x2 column strip';
+            status.textContent = '1. Initial: Each GPU holds its local 3x2 column strip';
             status.classList.remove('active');
-            commTag.style.background = ''; commTag.style.color = ''; commTag.style.borderColor = '';
-            bottomMatrices.forEach(fullM => {
-              fullM.querySelectorAll('.cell').forEach(c => { c.textContent = ''; c.style.background = ''; c.style.borderColor = ''; });
+            tapWires.forEach(tw => tw.classList.remove('active'));
+            spineFill.style.width = '0%';
+            gpuCards.forEach(gc => {
+              gc.bx.classList.remove('active');
+              gc.cap.innerHTML = `GPU ${gc.g} piece (3x2)<br>(cols ${2*gc.g}-${2*gc.g+1})`;
+              gc.holder.innerHTML = '';
+              const tile = Array.from({length:3},(_,r)=>[YM[r][2*gc.g], YM[r][2*gc.g+1]]);
+              gc.holder.appendChild(mtx(tile, {colorOf:()=>gc.g, small:true}));
             });
-            bottomBoxes.forEach(bx => bx.classList.remove('active'));
+            assembledMtx.querySelectorAll('.cell').forEach(c => { c.textContent = ''; c.style.background = ''; c.style.borderColor = ''; });
             check.innerHTML = '';
           }
         },
         {
-          name: '2. AllGather Sync',
-          delay: 1300,
+          name: '2. NVLink Assemble',
+          delay: 1500,
           run: async () => {
-            status.textContent = '2. AllGather: GPUs broadcast their column strips to each other over NVLink';
+            status.textContent = '2. NVLink Exchange: GPUs send column strips across NVLink and glue side-by-side';
             status.classList.add('active');
-            commTag.style.background = INK; commTag.style.color = ONINK; commTag.style.borderColor = INK;
-            topGpuCards.forEach(tm => tm.classList.add('flash'));
+            tapWires.forEach(tw => tw.classList.add('active'));
+            spineFill.style.width = '100%';
+
+            for(let pieceG=0; pieceG<4; pieceG++){
+              if(!alive(id)) return;
+              for(let t=0; t<3; t++) for(let c=0; c<2; c++){
+                const cell = assembledMtx.querySelectorAll('.cell')[t*8 + 2*pieceG + c];
+                cell.textContent = YM[t][2*pieceG + c];
+                paint(cell, pieceG);
+                cell.classList.add('flash');
+              }
+              await sleep(250);
+            }
           }
         },
         {
-          name: '3. Full 3x8 on Every GPU',
-          delay: 1600,
+          name: '3. Broadcast to GPUs',
+          delay: 1800,
           run: async () => {
-            status.textContent = '3. Result: Every single GPU now holds the complete 3x8 matrix!';
-            for(let pieceG=0; pieceG<4; pieceG++){
-              if(!alive(id)) return;
-              bottomMatrices.forEach(fullM=>{
-                for(let t=0; t<3; t++){
-                  for(let c=0; c<2; c++){
-                    const cell = fullM.querySelectorAll('.cell')[t*8 + 2*pieceG + c];
-                    cell.textContent = YM[t][2*pieceG + c];
-                    paint(cell, pieceG);
-                    cell.classList.add('flash');
-                  }
-                }
-              });
-              await sleep(250);
-            }
-            bottomBoxes.forEach(bx=>bx.classList.add('active'));
-            check.innerHTML = `All 4 GPUs now hold the identical, complete 3x8 output (matching the single-GPU baseline bit-for-bit) <span class="okmark">✓</span>`;
+            status.textContent = '3. Broadcast: Assembled 3x8 matrix travels across NVLink into all 4 GPUs';
+            const flights = gpuCards.map(gc => flyElement(assembledMtx, gc.holder, {duration: 600}));
+            await Promise.all(flights);
+            if(!alive(id)) return;
+
+            gpuCards.forEach(gc => {
+              gc.holder.innerHTML = '';
+              const fullM = mtx(YM, {small:true});
+              fullM.querySelectorAll('.cell').forEach(paintInk);
+              gc.holder.appendChild(fullM);
+              gc.cap.innerHTML = `<b>GPU ${gc.g} Final Matrix</b><br>(complete 3x8)`;
+              gc.bx.classList.add('active');
+            });
+            tapWires.forEach(tw => tw.classList.remove('active'));
+            check.innerHTML = `All 4 GPUs now hold the identical complete 3x8 output (matching 1-GPU baseline bit-for-bit) <span class="okmark">✓</span>`;
             status.classList.remove('active');
           }
         }
@@ -1345,7 +1364,7 @@ P2.push({
 
       const bx = gpuBox(g, inner);
       gpuRow.appendChild(bx);
-      parts.push({pm, xs, sm, cnt, bx, g});
+      parts.push({pm, xs, sm, cnt, bx, g, xsCol, smCol});
     }
     wrap.appendChild(gpuRow);
     body.appendChild(wrap);
@@ -1469,56 +1488,60 @@ P2.push({
 P2.push({
   title:'Combining Partial Sums: Adding the 4 GPU answers together',
   text:`<h2>How do we combine the partial answers from 4 GPUs?</h2>
-    <p>Because each GPU only held 2 of the 8 matrix rows, every GPU computed an incomplete partial sum for each prompt token. To complete the math, we must <b>add the four partial matrices together</b>.</p>
-    <p>In GPU networking, this operation is called an <b>AllReduce</b>: all 4 GPUs share their partial matrices across high-speed cables, sum them element-wise, and leave the identical completed 3x8 matrix on every GPU.</p>
-    <div class="key"><b>Simple Concept:</b> Just add the four partial matrices together (GPU 0 + GPU 1 + GPU 2 + GPU 3). The sum matches the 1-GPU baseline bit-for-bit.</div>
-    <div class="note"><b>Hardware reality:</b> AllReduce transfers data across physical interconnect wires (NVLink). High-speed NVLink (~900 GB/s) is fast, but slower than on-chip memory (~3.35 TB/s). This transfer is the "communication tax".</div>`,
+    <p>Because each GPU only held 2 of the 8 matrix rows, every GPU computed an incomplete partial sum for each prompt token.</p>
+    <p><b>The 3-stage process:</b></p>
+    <p>1. <b>Send down NVLink:</b> All 4 GPUs stream their 3x8 partial matrices onto the physical <b>NVLink Interconnect</b> wires.</p>
+    <p>2. <b>Element-Wise Sum:</b> The four partial matrices are added together: <code>GPU 0 + GPU 1 + GPU 2 + GPU 3 = Completed Matrix Y (3x8)</code>.</p>
+    <p>3. <b>Broadcast Back:</b> The completed matrix Y travels back across NVLink into <b>all four GPUs simultaneously</b>.</p>
+    <div class="key"><b>AllReduce = Sum + Broadcast.</b> Now every GPU holds the completed 3x8 output, ready to start the next layer.</div>`,
   setup(body, id){
-    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='920px';
+    const wrap = el('div','col'); wrap.style.gap='14px'; wrap.style.width='100%'; wrap.style.maxWidth='920px';
 
-    const status = el('div','statusBadge','1. Before sum: Each GPU holds an incomplete 3x8 partial matrix');
+    const status = el('div','statusBadge','1. Initial: Each GPU holds an incomplete 3x8 partial matrix');
     wrap.appendChild(status);
 
-    // Initial state: 4 GPUs with 3x8 partials
+    // Top GPU row: ONE set of 4 GPUs
     const topRow = el('div','row'); topRow.style.gap='10px';
-    const topPartials=[];
+    const gpuCards=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col'); inner.style.gap='4px';
+      const holder = el('div');
       const pm = mtx(rowPartialM[g], {colorOf:()=>g, small:true});
-      inner.appendChild(pm);
-      inner.appendChild(el('div','caption',`GPU ${g} partial (3x8)`));
+      holder.appendChild(pm);
+      inner.appendChild(holder);
+      const cap = el('div','caption',`GPU ${g} partial (3x8)`);
+      inner.appendChild(cap);
       const bx = gpuBox(g, inner);
       topRow.appendChild(bx);
-      topPartials.push(pm);
+      gpuCards.push({bx, holder, cap, pm, g});
     }
     wrap.appendChild(topRow);
 
-    // Interconnect exchange line
-    const commCol = el('div','col'); commCol.style.alignItems='center'; commCol.style.marginTop='4px';
-    const commTag = el('div','tag','↓↓ AllReduce: GPUs share and sum partial matrices across NVLink cables ↓↓');
-    commTag.style.cssText += ';font-size:11px;padding:5px 16px;transition:all .4s;';
-    commCol.appendChild(commTag);
-    wrap.appendChild(commCol);
-
-    // End state: 4 GPUs each holding completed 3x8 sum matrix!
-    const bottomRow = el('div','row'); bottomRow.style.gap='10px'; bottomRow.style.marginTop='4px';
-    const bottomMatrices=[];
-    const bottomBoxes=[];
+    // Physical NVLink Interconnect Component
+    const nvlink = el('div','nvlinkSection');
+    const tapsRow = el('div','nvlinkTapsRow');
+    const tapWires = [];
     for(let g=0;g<4;g++){
-      const inner = el('div','col'); inner.style.gap='4px';
-      const fullM = mtx(E.map(()=>Array(8).fill('')), {small:true});
-      inner.appendChild(fullM);
-      inner.appendChild(el('div','caption',`<b>GPU ${g} Final Output Y</b><br>(completed 3x8)`));
-      const bx = gpuBox(g, inner);
-      bottomRow.appendChild(bx);
-      bottomMatrices.push(fullM);
-      bottomBoxes.push(bx);
+      const w = el('div','nvlinkTapWire');
+      tapsRow.appendChild(w);
+      tapWires.push(w);
     }
-    wrap.appendChild(bottomRow);
+    nvlink.appendChild(tapsRow);
+    const spine = el('div','nvlinkSpine');
+    const spineFill = el('div','nvlinkSpineFill');
+    spine.appendChild(spineFill);
+    nvlink.appendChild(spine);
+    nvlink.appendChild(el('div','nvlinkBadge','NVLink Interconnect (~900 GB/s bidirectional mesh)'));
+    wrap.appendChild(nvlink);
 
+    // Central Summation Stage
+    const sumStage = el('div','col'); sumStage.style.gap='6px'; sumStage.style.alignItems='center';
+    sumStage.appendChild(el('div','caption','↓↓ Partial matrices travel across NVLink and add element-wise: GPU 0 + GPU 1 + GPU 2 + GPU 3 ↓↓'));
+    const sumMtx = mtx(E.map(()=>Array(8).fill('')), {small:true});
+    sumStage.appendChild(sumMtx);
     const check = el('div','caption','');
-    check.style.marginTop='6px';
-    wrap.appendChild(check);
+    sumStage.appendChild(check);
+    wrap.appendChild(sumStage);
 
     const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical completed 3x8 matrix Y</b>: ready to start the next layer. Cost: one exchange of tiny vectors over NVLink, vs. re-doing 16.7M multiply-adds on 1 GPU.');
     wrap.appendChild(foot);
@@ -1533,49 +1556,63 @@ P2.push({
           name: '1. Partials',
           delay: 1100,
           run: async () => {
-            status.textContent = '1. Before sum: Each GPU holds an incomplete 3x8 partial matrix';
+            status.textContent = '1. Initial: Each GPU holds an incomplete 3x8 partial matrix';
             status.classList.remove('active');
-            commTag.style.background = ''; commTag.style.color = ''; commTag.style.borderColor = '';
-            bottomMatrices.forEach(fullM => {
-              fullM.querySelectorAll('.cell').forEach(c => { c.textContent = ''; c.style.background = ''; c.style.borderColor = ''; });
+            tapWires.forEach(tw => tw.classList.remove('active'));
+            spineFill.style.width = '0%';
+            gpuCards.forEach(gc => {
+              gc.bx.classList.remove('active');
+              gc.cap.textContent = `GPU ${gc.g} partial (3x8)`;
+              gc.holder.innerHTML = '';
+              gc.holder.appendChild(mtx(rowPartialM[gc.g], {colorOf:()=>gc.g, small:true}));
             });
-            bottomBoxes.forEach(bx => bx.classList.remove('active'));
+            sumMtx.querySelectorAll('.cell').forEach(c => { c.textContent = ''; c.style.background = ''; c.style.borderColor = ''; });
             check.innerHTML = '';
           }
         },
         {
-          name: '2. AllReduce Sum',
-          delay: 1300,
+          name: '2. NVLink Sum',
+          delay: 1600,
           run: async () => {
-            status.textContent = '2. AllReduce: GPUs broadcast and sum partial matrices over NVLink cables';
+            status.textContent = '2. NVLink Sum: Partial matrices travel across NVLink cables and add element-wise';
             status.classList.add('active');
-            commTag.style.background = INK; commTag.style.color = ONINK; commTag.style.borderColor = INK;
-            topPartials.forEach(pm=>pm.classList.add('flash'));
+            tapWires.forEach(tw => tw.classList.add('active'));
+            spineFill.style.width = '100%';
+
+            for(let t=0; t<3; t++){
+              for(let c=0; c<8; c++){
+                if(!alive(id)) return;
+                const sumCell = sumMtx.querySelectorAll('.cell')[t*8 + c];
+                sumCell.textContent = YM[t][c];
+                paintInk(sumCell);
+                sumCell.classList.add('flash');
+              }
+              await sleep(300);
+            }
           }
         },
         {
-          name: '3. Complete Output Y',
-          delay: 1600,
+          name: '3. Broadcast to GPUs',
+          delay: 1800,
           run: async () => {
-            status.textContent = '3. Result: Every single GPU receives the identical completed sum matrix Y';
-            for(let t=0;t<3;t++){
-              for(let c=0;c<8;c++){
-                if(!alive(id)) return;
-                bottomMatrices.forEach(fullM=>{
-                  const sumCell = fullM.querySelectorAll('.cell')[t*8 + c];
-                  sumCell.textContent = YM[t][c];
-                  paintInk(sumCell);
-                  sumCell.classList.add('flash');
-                });
-              }
-              await sleep(250);
-            }
-            bottomBoxes.forEach(bx=>bx.classList.add('active'));
-            check.innerHTML = `All 4 GPUs now hold the identical completed 3x8 matrix Y (matching the single-GPU output exactly) <span class="okmark">✓</span>`;
+            status.textContent = '3. Broadcast: Completed matrix Y travels across NVLink into all 4 GPUs';
+            const flights = gpuCards.map(gc => flyElement(sumMtx, gc.holder, {duration: 600}));
+            await Promise.all(flights);
+            if(!alive(id)) return;
+
+            gpuCards.forEach(gc => {
+              gc.holder.innerHTML = '';
+              const fullM = mtx(YM, {small:true});
+              fullM.querySelectorAll('.cell').forEach(paintInk);
+              gc.holder.appendChild(fullM);
+              gc.cap.innerHTML = `<b>GPU ${gc.g} Final Matrix Y</b><br>(completed 3x8)`;
+              gc.bx.classList.add('active');
+            });
+            tapWires.forEach(tw => tw.classList.remove('active'));
+            check.innerHTML = `All 4 GPUs now hold the identical completed 3x8 matrix Y, ready for Layer 2 <span class="okmark">✓</span>`;
             status.classList.remove('active');
           }
         }
-      ]
     });
   }
 });
