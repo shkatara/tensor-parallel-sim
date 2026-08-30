@@ -270,6 +270,44 @@ function gpuBox(g, inner){
 }
 function vecEl(v, g, opts={}){ return mtx([v], {colorOf:()=>g, ...opts}); }
 
+function flyElement(srcEl, targetEl, {duration=650, onArrive}={}){
+  return new Promise(resolve => {
+    if(!srcEl || !targetEl){ resolve(); return; }
+    const srcRect = srcEl.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+
+    const clone = srcEl.cloneNode(true);
+    clone.style.position = 'fixed';
+    clone.style.left = srcRect.left + 'px';
+    clone.style.top = srcRect.top + 'px';
+    clone.style.width = srcRect.width + 'px';
+    clone.style.height = srcRect.height + 'px';
+    clone.style.margin = '0';
+    clone.style.zIndex = '9999';
+    clone.style.pointerEvents = 'none';
+    clone.style.transition = `all ${duration}ms cubic-bezier(0.25, 1, 0.5, 1)`;
+    clone.style.boxShadow = '0 8px 24px rgba(0,0,0,0.22)';
+    clone.style.opacity = '1';
+
+    document.body.appendChild(clone);
+    clone.getBoundingClientRect(); // force reflow
+
+    clone.style.left = targetRect.left + 'px';
+    clone.style.top = targetRect.top + 'px';
+    clone.style.width = targetRect.width + 'px';
+    clone.style.height = targetRect.height + 'px';
+
+    setTimeout(()=>{
+      clone.style.opacity = '0';
+      if(onArrive) onArrive();
+      setTimeout(()=>{
+        clone.remove();
+        resolve();
+      }, 120);
+    }, duration);
+  });
+}
+
 /* ================= universal animation stepper ================= */
 function createStepper({container, id, phases, autoDelay=1400, onComplete}){
   let currentIdx = -1;
@@ -645,13 +683,17 @@ P1.push({
         },
         {
           name: 'Load to GPUs',
-          delay: 1800,
+          delay: 2000,
           run: async () => {
-            status.textContent = '3. Loading 8x2 column shards into GPU memory';
+            status.textContent = '3. Loading 8x2 column shards into GPU memory in real time';
             for(let g=0;g<4;g++){
               if(!alive(id)) return;
               gpuBoxes[g].bx.classList.add('active');
               blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+
+              await flyElement(blocks[g], holders[g], {duration: 550});
+              if(!alive(id)) return;
+
               if(!holders[g].querySelector('.mtx')){
                 const shardData = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
                 const sm = mtx(shardData, {colorOf:()=>g, small:true});
@@ -659,7 +701,7 @@ P1.push({
                 holders[g].insertBefore(sm, holders[g].firstChild);
               }
               gpuBoxes[g].mf.style.width = '83%';
-              await sleep(350);
+              await sleep(200);
               gpuBoxes[g].bx.classList.remove('active');
             }
             status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (columns 2i to 2i+1)';
@@ -755,13 +797,17 @@ P1.push({
         },
         {
           name: 'Load to GPUs',
-          delay: 1800,
+          delay: 2000,
           run: async () => {
-            status.textContent = '3. Loading 2x8 row shards into GPU memory';
+            status.textContent = '3. Loading 2x8 row shards into GPU memory in real time';
             for(let g=0;g<4;g++){
               if(!alive(id)) return;
               gpuBoxes[g].bx.classList.add('active');
               blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+
+              await flyElement(blocks[g], holders[g], {duration: 550});
+              if(!alive(id)) return;
+
               if(!holders[g].querySelector('.mtx')){
                 const shardData = [W[2*g], W[2*g+1]];
                 const sm = mtx(shardData, {colorOf:()=>g, small:true});
@@ -769,7 +815,7 @@ P1.push({
                 holders[g].insertBefore(sm, holders[g].firstChild);
               }
               gpuBoxes[g].mf.style.width = '83%';
-              await sleep(350);
+              await sleep(200);
               gpuBoxes[g].bx.classList.remove('active');
             }
             status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (rows 2i to 2i+1)';
@@ -1348,14 +1394,25 @@ P2.push({
         },
         {
           name: '3. Dispatch to GPUs',
-          delay: 1500,
+          delay: 2000,
           run: async () => {
-            status.textContent = '3. Dispatch: Slices move into GPU 0, 1, 2, 3 in parallel';
+            status.textContent = '3. Dispatch: Slices move into GPU 0, 1, 2, 3 in real time';
             dispatchTag.style.background = INK; dispatchTag.style.color = ONINK; dispatchTag.style.borderColor = INK;
             for(let g=0; g<4; g++){
               if(!alive(id)) return;
               const p = parts[g];
               p.bx.classList.add('active');
+
+              // Dim source slices at top
+              xBlocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+              wBlocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+
+              // Real-time smooth flight animation from top source positions into GPU g slots
+              const flyX = flyElement(xBlocks[g], p.xsCol, {duration: 600});
+              const flyW = flyElement(wBlocks[g], p.smCol, {duration: 600});
+              await Promise.all([flyX, flyW]);
+              if(!alive(id)) return;
+
               for(let t=0; t<3; t++) for(let c=0; c<2; c++){
                 const cell = p.xs.querySelectorAll('.cell')[t*2 + c];
                 cell.textContent = E[t][2*g + c];
@@ -1368,7 +1425,7 @@ P2.push({
                 paint(cell, g);
                 cell.classList.add('flash');
               }
-              await sleep(250);
+              await sleep(200);
             }
           }
         },
