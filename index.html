@@ -1093,42 +1093,109 @@ P2.push({
   }
 });
 
-/* ---- 2.8 megatron col-to-row pairing ---- */
+/* ---- 2.8 chaining two multiplications ---- */
 P2.push({
-  title:'Megatron-LM Pairing: Column cut directly into Row cut',
-  text:`<h2>Why both cuts exist: Zero intermediate communication</h2>
-    <p>A standard transformer block has two back-to-back matrix multiplications (such as <code>W_up</code> followed by <code>W_down</code> in the MLP, or <code>QKV</code> followed by <code>Out</code> in Attention).</p>
-    <p><b>The Megatron pattern:</b></p>
-    <p>1. <b>First matmul (Column-Split):</b> Each GPU multiplies input X by its column shard, producing a 2-column tile. (No AllGather needed! The tile stays on that GPU.)</p>
-    <p>2. <b>Second matmul (Row-Split):</b> Each GPU multiplies its 2-column tile by its row shard, producing a partial vector.</p>
-    <div class="key"><b>The payoff:</b> Zero communication between the two matmuls. We skip the AllGather completely and perform only <b>ONE AllReduce</b> at the end of the entire block.</div>`,
-  setup(body){
-    const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='840px';
+  title:'Chaining Two Multiplications: Zero communication until the end',
+  text:`<h2>Two steps of math, only ONE network sync</h2>
+    <p>Inside every transformer layer, there are two matrix multiplications back-to-back (expanding the token vector, then shrinking it back).</p>
+    <p>If GPUs had to stop and exchange data over cables after every single multiplication, the network would become an enormous bottleneck.</p>
+    <p><b>The smart combination:</b></p>
+    <p>1. <b>First math step (Column Cut):</b> GPU 0 computes columns 0-1 and keeps them in its local on-chip cache.</p>
+    <p>2. <b>Second math step (Row Cut):</b> GPU 0's row shard only requires columns 0-1! It consumes its own local data directly without any network transfer.</p>
+    <div class="key"><b>The payoff:</b> Two full matrix multiplications run at full speed with <b>zero intermediate communication</b>. The GPUs talk over NVLink cables only once at the end using <b>one AllReduce</b>.</div>`,
+  setup(body, id){
+    const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='860px';
+
+    const status = el('div','statusBadge','1. All 4 GPUs compute column multiplication in parallel');
+    flowWrap.appendChild(status);
 
     const stage1 = el('div','row'); stage1.style.gap='12px';
+    const gpuCards = [];
 
     for(let g=0;g<4;g++){
-      const inner = el('div','col'); inner.style.gap='6px';
-      inner.appendChild(el('div','chip',`1. Col Matmul<br><small style="color:var(--dim)">produces cols ${2*g}-${2*g+1}</small>`));
-      inner.appendChild(el('div','arrow','↓'));
-      inner.appendChild(el('div','tag','local data (0 comm)'));
-      inner.appendChild(el('div','arrow','↓'));
-      inner.appendChild(el('div','chip',`2. Row Matmul<br><small style="color:var(--dim)">uses cols ${2*g}-${2*g+1}</small>`));
-      const box1 = gpuBox(g, inner);
-      stage1.appendChild(box1);
+      const inner = el('div','col'); inner.style.gap='8px';
+      
+      const c1 = el('div','chip',`1. Column Math<br><small style="color:var(--dim)">makes cols ${2*g}-${2*g+1}</small>`);
+      inner.appendChild(c1);
+      
+      const conn = el('div','tag','↓ local on-chip memory (0 network transfer) ↓');
+      conn.style.fontSize = '9px';
+      inner.appendChild(conn);
+      
+      const c2 = el('div','chip',`2. Row Math<br><small style="color:var(--dim)">uses cols ${2*g}-${2*g+1}</small>`);
+      inner.appendChild(c2);
+      
+      const box = gpuBox(g, inner);
+      stage1.appendChild(box);
+      gpuCards.push({box, c1, conn, c2, g});
     }
     flowWrap.appendChild(stage1);
 
-    const syncBox = el('div','col'); syncBox.style.marginTop='10px';
-    syncBox.appendChild(el('div','arrow','↓↓↓↓'));
-    const syncTag = el('div','tag','ONE AllReduce Sync for the entire block');
-    syncTag.style.cssText += ';font-size:12px;padding:6px 14px;background:var(--ink);color:var(--onInk);border-color:var(--ink);';
-    syncBox.appendChild(syncTag);
-    syncBox.appendChild(el('div','caption','All 4 GPUs sum partial vectors once -> ready for next layer'));
-    flowWrap.appendChild(syncBox);
+    const commCol = el('div','col'); commCol.style.width='100%'; commCol.style.alignItems='center'; commCol.style.marginTop='6px';
+    commCol.appendChild(el('div','caption','interconnect cables (NVLink ~900 GB/s)'));
+    const commWire = el('div');
+    commWire.style.cssText = 'width:100%;max-width:680px;height:6px;background:var(--line2);border-radius:3px;position:relative;overflow:hidden;margin:4px 0;';
+    const pulse = el('div');
+    pulse.style.cssText = 'height:100%;width:0%;background:linear-gradient(90deg,var(--g0),var(--g1),var(--g2),var(--g3));transition:width 1.2s ease;';
+    commWire.appendChild(pulse);
+    commCol.appendChild(commWire);
+
+    const syncTag = el('div','tag','ONE AllReduce Sync at the end of the block');
+    syncTag.style.cssText += ';font-size:11.5px;padding:6px 16px;background:var(--panel);border:1px solid var(--line2);color:var(--text);';
+    commCol.appendChild(syncTag);
+    commCol.appendChild(el('div','caption','all 4 GPUs exchange partial sums once -> ready for next layer'));
+    flowWrap.appendChild(commCol);
 
     body.appendChild(flowWrap);
-    body.appendChild(el('div','bigNote','By pairing <b>Column Cut -> Row Cut</b>, intermediate activations never leave the GPU that computed them. Two matrix multiplications require only <b>one sync point</b> over NVLink.'));
+    body.appendChild(el('div','bigNote','By pairing <b>Column Cut -> Row Cut</b>, activations never leave the GPU between multiplications. Two large math operations require only <b>one sync point</b> over NVLink.'));
+
+    (async()=>{
+      await sleep(500); if(!alive(id)) return;
+      
+      // Phase 1: Column Math
+      status.textContent = '1. Step 1: All 4 GPUs compute column multiplication in parallel';
+      status.classList.add('active');
+      gpuCards.forEach(gc=>{
+        gc.c1.style.background = GT[gc.g];
+        gc.c1.style.borderColor = GC[gc.g];
+        gc.c1.style.color = GC[gc.g];
+        gc.c1.classList.add('flash');
+      });
+      await sleep(1400); if(!alive(id)) return;
+
+      // Phase 2: Local Memory Transfer (0 Network)
+      status.textContent = '2. Local Memory: Outputs feed directly into next step (0 network cables used)';
+      gpuCards.forEach(gc=>{
+        gc.conn.style.background = 'var(--okWash)';
+        gc.conn.style.borderColor = 'var(--ok)';
+        gc.conn.style.color = 'var(--ok)';
+        gc.conn.classList.add('flash');
+      });
+      await sleep(1400); if(!alive(id)) return;
+
+      // Phase 3: Row Math
+      status.textContent = '3. Step 2: All 4 GPUs compute row multiplication in parallel';
+      gpuCards.forEach(gc=>{
+        gc.c2.style.background = GT[gc.g];
+        gc.c2.style.borderColor = GC[gc.g];
+        gc.c2.style.color = GC[gc.g];
+        gc.c2.classList.add('flash');
+      });
+      await sleep(1400); if(!alive(id)) return;
+
+      // Phase 4: AllReduce Sync
+      status.textContent = '4. Single Sync: GPUs exchange and sum partial answers over NVLink cables';
+      pulse.style.width = '100%';
+      syncTag.style.background = INK;
+      syncTag.style.color = ONINK;
+      syncTag.style.borderColor = INK;
+      syncTag.classList.add('flash');
+      await sleep(1500); if(!alive(id)) return;
+
+      // Complete
+      status.textContent = 'Complete: Two full matrix multiplications done with only ONE sync point';
+      status.classList.remove('active');
+    })();
   }
 });
 
