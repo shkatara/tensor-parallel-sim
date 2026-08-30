@@ -226,16 +226,13 @@ const paintInk = cell => { cell.style.background=INK; cell.style.color=ONINK; ce
 // The running example: X (1x8 input activation) and W (8x8 weight matrix)
 const X = [1, 2, 0, 1, 2, 1, 1, 0];
 const W = Array.from({length:8},(_,r)=>Array.from({length:8},(_,c)=>((r*3 + c*5) % 7) - 3));
-// full result Y = X · W   (Y[c] = Σ_r X[r]·W[r][c])
-const Y = Array.from({length:8},(_,c)=>X.reduce((s,x,r)=>s + x*W[r][c],0));
-// column shards: GPU i owns columns 2i, 2i+1 -> produces Y[2i], Y[2i+1] exactly
-// row shards: GPU i owns rows 2i, 2i+1 and X-slice [2i,2i+1] -> produces a PARTIAL 1x8
-const rowPartial = Array.from({length:4},(_,g)=>
-  Array.from({length:8},(_,c)=> X[2*g]*W[2*g][c] + X[2*g+1]*W[2*g+1][c]));
 // full prefill input: one embedding row per prompt token ("The", "cat", "sat")
 const E = [X, [2,0,1,1,0,2,1,1], [0,1,2,0,1,1,2,0]];
 // full prefill output: (3x8)·(8x8) = 3x8: three independent row·W products
 const YM = E.map(x => Array.from({length:8},(_,c)=>x.reduce((s,v,r)=>s + v*W[r][c],0)));
+// row shards: GPU g owns rows 2g, 2g+1 and X-slice cols [2g, 2g+1] -> produces a PARTIAL 3x8 matrix for all 3 prompt tokens
+const rowPartialM = Array.from({length:4},(_,g)=>
+  E.map(x => Array.from({length:8},(_,c)=> x[2*g]*W[2*g][c] + x[2*g+1]*W[2*g+1][c])));
 
 let runId = 0;                      // cancels in-flight animations on step change
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
@@ -780,7 +777,7 @@ P2.push({
     body.appendChild(row);
     const meter = el('div','col'); meter.style.marginTop='22px';
     const cnt = el('div','counter','multiply-adds: <b>0</b> / 192 (64 per token row)');
-    const tw = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--accent)'; tb.appendChild(tf); tw.appendChild(tb);
+    const tw = el('div','tbarWrap'); const tb=el('div','tbar'); const tf=el('div'); tf.style.background='var(--accent)'; tb.appendChild(tf); meter.appendChild(tw);
     meter.appendChild(cnt); meter.appendChild(tw);
     meter.appendChild(el('div','caption','time on 1 GPU: rows are independent of each other, but one GPU still owns ALL of the work'));
     body.appendChild(meter);
@@ -951,64 +948,81 @@ P2.push({
   title:'Row-Parallel compute: 4 GPUs multiply row slices by 2x8 shards',
   text:`<h2>Step 1 of Row Parallelism: Partial Sums</h2>
     <p>Now consider the second cut: <b>Row Sharding</b>. GPU i holds rows 2i to 2i+1 of W (a 2x8 block).</p>
-    <p>Each GPU only needs the 2 entries of X that match its row indices. It computes: <code>(1x2) · (2x8)</code> -> a <b>1x8 partial output</b>.</p>
-    <p>This 1x8 vector is only a <b>partial sum</b> because each GPU only held 2 of the 8 terms required for each dot product.</p>
-    <div class="note"><b>Visual note:</b> We highlight row 0 ("The") here while rows 1-2 ("cat", "sat") compute identically in parallel, keeping the numbers readable.</div>`,
+    <p>For all 3 prompt tokens ("The", "cat", "sat"), each GPU only needs the 2 column entries of X matching its row indices. Each GPU receives a <b>3x2 slice of X</b> and multiplies it by its <b>2x8 shard of W</b>.</p>
+    <p>Each GPU computes: <code>(3x2) · (2x8)</code> -> a <b>3x8 partial output matrix</b> (one partial row per prompt token).</p>
+    <p>This 3x8 matrix is a <b>partial sum</b> because each GPU only held 2 of the 8 terms required for each dot product.</p>
+    <div class="key">Notice: All 3 prompt tokens compute simultaneously across all 4 GPUs. Next step: how do we sum the partial matrices?</div>`,
   setup(body, id){
     const bc = el('div','col');
     const xFull = mtx(E, {small:true});
-    xFull.querySelectorAll('.cell').forEach(cell=>{
-      if(+cell.dataset.r===0){ paintInk(cell); }
-      else { cell.classList.add('dimmed'); cell.style.opacity='0.35'; }
-    });
+    xFull.querySelectorAll('.cell').forEach(paintInk);
     bc.appendChild(xFull);
-    bc.appendChild(el('div','caption','X (3x8 prompt): row 0 ("The") highlighted for animation<br>(rows for "cat" & "sat" compute identically in parallel; showing 1 row to keep math readable) ↓'));
+    bc.appendChild(el('div','caption','X (3x8 prompt: "The", "cat", "sat"): watch columns 2i to 2i+1 slice out to GPU i ↓'));
     body.appendChild(bc);
+
     const row = el('div','row'); row.style.marginTop='14px';
     const parts=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col');
-      const xs = mtx([['','']], {small:true});
-      inner.appendChild(xs); inner.appendChild(el('div','caption',`X slice (1x2): entries ${2*g}-${2*g+1}`));
-      inner.appendChild(el('div','plus','×'));
+      const topOp = el('div','row'); topOp.style.cssText='gap:6px;align-items:center;';
+      const xs = mtx(E.map(()=>['','']), {small:true});
+      const xsCol = el('div','col'); xsCol.appendChild(xs); xsCol.appendChild(el('div','caption',`X slice (3x2)<br>(cols ${2*g}-${2*g+1})`));
+      topOp.appendChild(xsCol);
+      topOp.appendChild(el('div','plus','×'));
       const sm = mtx([W[2*g], W[2*g+1]],{colorOf:()=>g, small:true});
-      inner.appendChild(sm);
-      inner.appendChild(el('div','caption',`row shard (2x8): rows ${2*g}-${2*g+1}`));
-      const pm = mtx([Array(8).fill('')],{small:true});
-      inner.appendChild(pm); inner.appendChild(el('div','caption','partial Y (1x8)'));
+      const smCol = el('div','col'); smCol.appendChild(sm); smCol.appendChild(el('div','caption',`shard (2x8)<br>(rows ${2*g}-${2*g+1})`));
+      topOp.appendChild(smCol);
+      inner.appendChild(topOp);
+
+      inner.appendChild(el('div','arrow','↓'));
+      const pm = mtx(E.map(()=>Array(8).fill('')),{small:true});
+      inner.appendChild(pm);
+      inner.appendChild(el('div','caption','partial Y (3x8: all 3 tokens)'));
+      const cnt = el('div','counter','<b>0</b>/48 MACs');
+      inner.appendChild(cnt);
+
       const bx = gpuBox(g, inner);
       row.appendChild(bx);
-      parts.push({pm, xs, sm, bx, g});
+      parts.push({pm, xs, sm, cnt, bx, g});
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','Each GPU computes a full-width 1x8 vector, but each number in it is missing terms from the other 6 rows. Next step: how do we sum them?'));
+    body.appendChild(el('div','bigNote','Each GPU computes a full 3x8 matrix for all 3 tokens, but each cell is missing terms from the other 6 rows. Next step: how do we sum them?'));
+
     (async()=>{
       await sleep(500); if(!alive(id)) return;
       const srcCells = xFull.querySelectorAll('.cell');
       for(const p of parts){
         if(!alive(id)) return;
         p.bx.classList.add('active');
-        p.xs.querySelectorAll('.cell').forEach((cell,i)=>{
-          const c = 2*p.g + i;
-          paint(srcCells[c], p.g); srcCells[c].classList.add('flash');
-          cell.textContent = X[c]; paint(cell, p.g); cell.classList.add('flash');
-        });
+        for(let t=0;t<3;t++){
+          for(let i=0;i<2;i++){
+            const srcIdx = t*8 + (2*p.g + i);
+            paint(srcCells[srcIdx], p.g); srcCells[srcIdx].classList.add('flash');
+            const targetCell = p.xs.querySelectorAll('.cell')[t*2 + i];
+            targetCell.textContent = E[t][2*p.g + i];
+            paint(targetCell, p.g); targetCell.classList.add('flash');
+          }
+        }
         await sleep(350);
       }
       await sleep(400); if(!alive(id)) return;
+
       for(let c=0;c<8;c++){
         if(!alive(id)) return;
         parts.forEach(p=>{
           p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
           p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
         });
-        await sleep(170); if(!alive(id)) return;
+        await sleep(220); if(!alive(id)) return;
         parts.forEach(p=>{
-          const cell = p.pm.querySelectorAll('.cell')[c];
-          cell.textContent = rowPartial[p.g][c];
-          paint(cell, p.g);
+          for(let t=0;t<3;t++){
+            const cell = p.pm.querySelectorAll('.cell')[t*8 + c];
+            cell.textContent = rowPartialM[p.g][t][c];
+            paint(cell, p.g);
+          }
+          p.cnt.innerHTML = `<b>${(c+1)*6}</b>/48 MACs`;
         });
-        await sleep(110);
+        await sleep(140);
       }
       parts.forEach(p=>{
         p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
@@ -1021,46 +1035,60 @@ P2.push({
 
 /* ---- 2.7 AllReduce ---- */
 P2.push({
-  title:'AllReduce: Summing partial vectors across all GPUs',
+  title:'AllReduce: Summing partial matrices across all GPUs',
   text:`<h2>Step 2 of Row Parallelism: AllReduce</h2>
-    <p>Because each GPU produced an incomplete partial sum, joining them requires <b>element-wise addition</b>.</p>
-    <p><b>AllReduce</b> pools the partial vectors from all GPUs, adds them element-wise, and ensures every GPU holds the final sum.</p>
-    <div class="key"><b>AllReduce = Sum.</b> The four partial rows sum up to the exact same full vector Y as the 1-GPU baseline.</div>
+    <p>Because each GPU produced an incomplete partial sum for each prompt token, joining them requires <b>element-wise addition</b>.</p>
+    <p><b>AllReduce</b> pools the 3x8 partial matrices from all 4 GPUs, adds them element-wise across NVLink interconnect wires, and leaves the completed 3x8 matrix on every GPU.</p>
+    <div class="key"><b>AllReduce = Sum.</b> The four 3x8 partial matrices sum up to the exact same full 3x8 matrix Y as the 1-GPU baseline and Column-Parallel AllGather.</div>
     <div class="note"><b>Hardware reality:</b> AllReduce transfers data across physical interconnect wires (NVLink). High-speed NVLink (~900 GB/s) is fast, but slower than on-chip memory (~3.35 TB/s). This transfer is the "communication tax".</div>`,
   setup(body, id){
     const ar = el('div','col'); ar.style.marginTop='10px';
-    ar.appendChild(el('div','caption','⇅ AllReduce: every GPU sends its partial to the others, element-wise sums arrive everywhere ⇅'));
-    const stackBox = el('div','col'); stackBox.style.gap='4px';
-    const stackRows=[];
+    ar.appendChild(el('div','caption','⇅ AllReduce: every GPU shares its 3x8 partial matrix, element-wise sums arrive everywhere ⇅'));
+    ar.style.width='100%';
+
+    const partialsRow = el('div','row'); partialsRow.style.gap='10px'; partialsRow.style.alignItems='center';
+    const partialBoxes=[];
     for(let g=0;g<4;g++){
-      const r = mtx([Array(8).fill('')],{small:true});
-      stackRows.push(r); stackBox.appendChild(r);
-      if(g<3) stackBox.appendChild(el('div','plus','+'));
+      const pCol = el('div','col'); pCol.style.gap='4px';
+      const pm = mtx(rowPartialM[g], {colorOf:()=>g, small:true});
+      pCol.appendChild(pm);
+      pCol.appendChild(el('div','caption',`GPU ${g} partial (3x8)`));
+      partialsRow.appendChild(pCol);
+      partialBoxes.push(pm);
+      if(g<3) partialsRow.appendChild(el('div','plus','+'));
     }
-    stackBox.appendChild(el('div','sumline')).style.width='230px';
-    const sum = mtx([Array(8).fill('')],{small:true});
-    stackBox.appendChild(sum);
+    ar.appendChild(partialsRow);
+
+    const sumCol = el('div','col'); sumCol.style.marginTop='18px';
+    sumCol.appendChild(el('div','arrow','↓↓↓↓  AllReduce (Element-wise Sum across NVLink)  ↓↓↓↓'));
+    const sumMtx = mtx(E.map(()=>Array(8).fill('')),{small:true});
+    sumCol.appendChild(sumMtx);
     const check = el('div','caption','');
-    ar.appendChild(stackBox); ar.appendChild(check);
+    sumCol.appendChild(check);
+    ar.appendChild(sumCol);
+
     body.appendChild(ar);
-    const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical full Y</b>: ready to start the next layer. Cost: one exchange of a tiny vector over NVLink, vs. re-doing 16.7M multiply-adds on 1 GPU.');
+    const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical completed 3x8 matrix Y</b>: ready to start the next layer. Cost: one exchange of tiny vectors over NVLink, vs. re-doing 16.7M multiply-adds on 1 GPU.');
     body.appendChild(foot);
+
     (async()=>{
-      await sleep(500); if(!alive(id)) return;
+      await sleep(600); if(!alive(id)) return;
       for(let g=0;g<4;g++){
-        if(!alive(id)) return;
-        stackRows[g].querySelectorAll('.cell').forEach((cell,c)=>{
-          cell.textContent = rowPartial[g][c];
-          paint(cell,g);
-        });
-        stackRows[g].classList.add('fadeIn');
-        await sleep(300);
+        partialBoxes[g].classList.add('flash');
       }
-      await sleep(400); if(!alive(id)) return;
-      sum.querySelectorAll('.cell').forEach((cell,c)=>{
-        cell.textContent = Y[c]; paintInk(cell); cell.classList.add('flash');
-      });
-      check.innerHTML = `same Y again <span class="okmark">✓</span>: [${Y.join(' ')}] (four shard-matmuls ≡ one big matmul)`;
+      await sleep(600); if(!alive(id)) return;
+
+      for(let t=0;t<3;t++){
+        for(let c=0;c<8;c++){
+          if(!alive(id)) return;
+          const sumCell = sumMtx.querySelectorAll('.cell')[t*8 + c];
+          sumCell.textContent = YM[t][c];
+          paintInk(sumCell);
+          sumCell.classList.add('flash');
+        }
+        await sleep(350);
+      }
+      check.innerHTML = `all 24 cells (3 prompt tokens x 8 hidden dims) match the single-GPU output exactly <span class="okmark">✓</span>`;
     })();
   }
 });
