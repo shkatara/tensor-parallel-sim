@@ -60,7 +60,7 @@
   .tab:hover{color:var(--text); border-color:var(--ink);}
   .tab.active{color:var(--onInk); border-color:var(--ink); background:var(--ink);}
   main{flex:1; display:flex; gap:0; overflow:hidden;}
-  #stage{flex:1; padding:26px 22px; overflow:auto; display:flex; flex-direction:column; align-items:center;}
+  #stage{flex:1; padding:22px 20px; overflow:auto; display:flex; flex-direction:column; align-items:center;}
   #stageInner{width:100%; max-width:1060px;}
   aside{width:352px; min-width:310px; border-left:1px solid var(--line2); padding:24px; overflow:auto; background:var(--panel2); font-family:var(--serif); font-size:15.5px; line-height:1.62;}
   aside h2{font-family:var(--mono); font-size:11px; font-weight:700; color:var(--accent); margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); text-transform:uppercase; letter-spacing:.12em;}
@@ -81,8 +81,19 @@
   .replay{margin-left:auto; padding:7px 12px; font-size:11px; border-radius:2px; border:1px dashed var(--line2); background:transparent; color:var(--dim); cursor:pointer; font-family:var(--mono);}
   .replay:hover{color:var(--accent); border-color:var(--accent);}
 
+  /* ---------- interactive stepper bar ---------- */
+  .stepperBar{display:flex; align-items:center; justify-content:center; gap:8px; margin:0 0 16px; flex-wrap:wrap;}
+  .stepCtrlBtn{padding:5px 12px; font-size:11px; font-family:var(--mono); border-radius:2px; border:1px solid var(--line2); background:var(--panel); color:var(--text); cursor:pointer; display:flex; align-items:center; gap:4px; text-transform:uppercase; letter-spacing:.05em; transition:all .2s;}
+  .stepCtrlBtn:hover:not(:disabled){border-color:var(--ink); background:var(--panel2);}
+  .stepCtrlBtn.primary{background:var(--accent); border-color:var(--accent); color:var(--onAccent);}
+  .stepCtrlBtn:disabled{opacity:.35; cursor:default;}
+  .phasePills{display:flex; gap:4px; align-items:center; margin:0 4px;}
+  .phasePill{padding:3px 8px; font-size:10px; font-family:var(--mono); border:1px solid var(--line); background:var(--bg); color:var(--dim); border-radius:2px; cursor:pointer; transition:all .2s;}
+  .phasePill:hover{border-color:var(--ink); color:var(--text);}
+  .phasePill.active{background:var(--ink); color:var(--onInk); border-color:var(--ink);}
+
   /* ---------- shared visual pieces ---------- */
-  .stageTitle{font-family:var(--serif); font-size:22px; font-weight:500; line-height:1.3; margin:0 0 22px; text-align:center; color:var(--text);}
+  .stageTitle{font-family:var(--serif); font-size:22px; font-weight:500; line-height:1.3; margin:0 0 16px; text-align:center; color:var(--text);}
   .row{display:flex; gap:18px; justify-content:center; align-items:flex-start; flex-wrap:wrap;}
   .col{display:flex; flex-direction:column; gap:10px; align-items:center;}
   .caption{font-size:11px; color:var(--dim); text-align:center; line-height:1.5;}
@@ -259,6 +270,102 @@ function gpuBox(g, inner){
 }
 function vecEl(v, g, opts={}){ return mtx([v], {colorOf:()=>g, ...opts}); }
 
+/* ================= universal animation stepper ================= */
+function createStepper({container, id, phases, autoDelay=1400, onComplete}){
+  let currentIdx = -1;
+  let isPlaying = true;
+  let timer = null;
+
+  const bar = el('div','stepperBar');
+  const restartBtn = el('button','stepCtrlBtn','↻ Restart');
+  const playBtn = el('button','stepCtrlBtn','⏸ Pause');
+  const nextBtn = el('button','stepCtrlBtn primary','Next Action ❯');
+  
+  const pillsWrap = el('div','phasePills');
+  const pills = phases.map((p, idx)=>{
+    const pill = el('button','phasePill', `${idx+1}`);
+    pill.title = p.name || `Action ${idx+1}`;
+    pill.onclick = ()=>{
+      pause();
+      goTo(idx);
+    };
+    pillsWrap.appendChild(pill);
+    return pill;
+  });
+
+  bar.appendChild(restartBtn);
+  bar.appendChild(playBtn);
+  bar.appendChild(nextBtn);
+  bar.appendChild(pillsWrap);
+  container.insertBefore(bar, container.firstChild);
+
+  function updateUI(){
+    pills.forEach((p,i)=>p.classList.toggle('active', i===currentIdx));
+    playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+    nextBtn.disabled = (currentIdx >= phases.length - 1);
+  }
+
+  function pause(){
+    isPlaying = false;
+    if(timer){ clearTimeout(timer); timer = null; }
+    updateUI();
+  }
+
+  function play(){
+    isPlaying = true;
+    updateUI();
+    if(currentIdx >= phases.length - 1){
+      goTo(0);
+    } else {
+      scheduleNext(400);
+    }
+  }
+
+  async function goTo(idx){
+    if(!alive(id)) return;
+    if(idx < 0 || idx >= phases.length) return;
+    currentIdx = idx;
+    updateUI();
+    await phases[idx].run();
+    if(!alive(id)) return;
+    if(currentIdx === phases.length - 1){
+      if(onComplete) onComplete();
+      pause();
+    } else if(isPlaying){
+      scheduleNext(phases[idx].delay || autoDelay);
+    }
+  }
+
+  function scheduleNext(ms = autoDelay){
+    if(timer) clearTimeout(timer);
+    timer = setTimeout(()=>{
+      if(alive(id) && isPlaying && currentIdx < phases.length - 1){
+        goTo(currentIdx + 1);
+      }
+    }, ms);
+  }
+
+  restartBtn.onclick = ()=>{
+    pause();
+    goTo(0);
+  };
+  playBtn.onclick = ()=>{
+    if(isPlaying) pause();
+    else play();
+  };
+  nextBtn.onclick = ()=>{
+    pause();
+    if(currentIdx < phases.length - 1){
+      goTo(currentIdx + 1);
+    }
+  };
+
+  // Start at phase 0
+  goTo(0);
+
+  return { goTo, pause, play };
+}
+
 /* ================= step engine ================= */
 const state = {part:1, step:0};
 const stage = document.getElementById('stageInner');
@@ -374,21 +481,25 @@ P1.push({
     }
     body.appendChild(row);
     body.appendChild(el('div','bigNote','A prompt travels <b>left to right</b>. Only one GPU works at a time on this request: the others wait. 4 GPUs, ~1 GPU of speed for your token.'));
-    (async()=>{
-      while(alive(id)){
-        for(let g=0; g<4 && alive(id); g++){
+
+    createStepper({
+      container: body,
+      id,
+      phases: [0,1,2,3].map(activeG => ({
+        name: `GPU ${activeG}`,
+        delay: 1100,
+        run: async () => {
           boxes.forEach((x,i)=>{
-            const on = i===g;
+            const on = i === activeG;
             x.b.classList.toggle('active', on);
-            x.st.textContent = on?'computing':'idle';
-            x.st.style.color = on?GC[i]:'var(--dim)';
-            x.st.style.background = on?GT[i]:'';
-            x.st.style.borderColor = on?GC[i]:'';
+            x.st.textContent = on ? 'computing' : 'idle';
+            x.st.style.color = on ? GC[i] : 'var(--dim)';
+            x.st.style.background = on ? GT[i] : '';
+            x.st.style.borderColor = on ? GC[i] : '';
           });
-          await sleep(850);
         }
-      }
-    })();
+      }))
+    });
   }
 });
 
@@ -414,16 +525,38 @@ P1.push({
     col.appendChild(stack);
     body.appendChild(col);
     const row = el('div','row'); row.style.marginTop='24px';
+    const memFills = [];
     for(let g=0;g<4;g++){
       const inner = el('div');
       inner.appendChild(el('div','caption',`1/4 of layer 1<br>1/4 of layer 2<br>⋮<br>1/4 of layer 94`));
       const mb = el('div','membar'); const fill = el('div'); mb.appendChild(fill); inner.appendChild(mb);
       inner.appendChild(el('div','caption','~118 GB / GPU'));
       row.appendChild(gpuBox(g, inner));
-      setTimeout(()=>{ if(alive(id)) fill.style.width='83%'; }, 300);
+      memFills.push(fill);
     }
     body.appendChild(row);
     body.appendChild(el('div','bigNote','470 GB ÷ 4 = <b>~118 GB per GPU</b>. (Real 4-GPU rigs use FP8 on H200 141 GB cards or quantize. The <i>splitting logic</i> is identical.)'));
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Split Layers',
+          delay: 1000,
+          run: async () => {
+            memFills.forEach(f => f.style.width = '0%');
+          }
+        },
+        {
+          name: 'Load Shards',
+          delay: 1400,
+          run: async () => {
+            memFills.forEach(f => f.style.width = '83%');
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -479,39 +612,62 @@ P1.push({
     }
     body.appendChild(row);
 
-    (async()=>{
-      await sleep(700); if(!alive(id)) return;
-
-      // Phase 2: Slicing vertically into 4 column strips
-      status.textContent = '2. Slicing vertically into four 8x2 column blocks';
-      status.classList.add('active');
-      container.style.gap = '16px';
-      blocks.forEach((b,g)=>{
-        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
-        b.classList.add('flash');
-      });
-      await sleep(1400); if(!alive(id)) return;
-
-      // Phase 3: Loading into GPUs
-      status.textContent = '3. Loading 8x2 column shards into GPU memory';
-      for(let g=0;g<4;g++){
-        if(!alive(id)) return;
-        gpuBoxes[g].bx.classList.add('active');
-        blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
-        const shardData = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
-        const sm = mtx(shardData, {colorOf:()=>g, small:true});
-        sm.classList.add('fadeIn');
-        holders[g].insertBefore(sm, holders[g].firstChild);
-        gpuBoxes[g].mf.style.width = '83%';
-        await sleep(500);
-        gpuBoxes[g].bx.classList.remove('active');
-      }
-
-      // Phase 4: Complete
-      if(!alive(id)) return;
-      status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (columns 2i to 2i+1)';
-      status.classList.remove('active');
-    })();
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Full Matrix',
+          delay: 1200,
+          run: async () => {
+            status.textContent = '1. Full 8x8 weight matrix W on host';
+            status.classList.remove('active');
+            container.style.gap = '3px';
+            blocks.forEach(b=>{
+              b.querySelectorAll('.cell').forEach(c => { c.style.background=''; c.style.color=''; c.style.borderColor=''; c.classList.remove('dimmed'); });
+            });
+            gpuBoxes.forEach(gb => { gb.mf.style.width='0%'; gb.bx.classList.remove('active'); });
+            holders.forEach(h => { const sm = h.querySelector('.mtx'); if(sm) sm.remove(); });
+          }
+        },
+        {
+          name: 'Vertical Slice',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '2. Slicing vertically into four 8x2 column blocks';
+            status.classList.add('active');
+            container.style.gap = '16px';
+            blocks.forEach((b,g)=>{
+              b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+              b.classList.add('flash');
+            });
+          }
+        },
+        {
+          name: 'Load to GPUs',
+          delay: 1800,
+          run: async () => {
+            status.textContent = '3. Loading 8x2 column shards into GPU memory';
+            for(let g=0;g<4;g++){
+              if(!alive(id)) return;
+              gpuBoxes[g].bx.classList.add('active');
+              blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+              if(!holders[g].querySelector('.mtx')){
+                const shardData = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
+                const sm = mtx(shardData, {colorOf:()=>g, small:true});
+                sm.classList.add('fadeIn');
+                holders[g].insertBefore(sm, holders[g].firstChild);
+              }
+              gpuBoxes[g].mf.style.width = '83%';
+              await sleep(350);
+              gpuBoxes[g].bx.classList.remove('active');
+            }
+            status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (columns 2i to 2i+1)';
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -566,39 +722,62 @@ P1.push({
     }
     body.appendChild(row);
 
-    (async()=>{
-      await sleep(700); if(!alive(id)) return;
-
-      // Phase 2: Slicing horizontally into 4 row slabs
-      status.textContent = '2. Slicing horizontally into four 2x8 row blocks';
-      status.classList.add('active');
-      container.style.gap = '14px';
-      blocks.forEach((b,g)=>{
-        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
-        b.classList.add('flash');
-      });
-      await sleep(1400); if(!alive(id)) return;
-
-      // Phase 3: Loading into GPUs
-      status.textContent = '3. Loading 2x8 row shards into GPU memory';
-      for(let g=0;g<4;g++){
-        if(!alive(id)) return;
-        gpuBoxes[g].bx.classList.add('active');
-        blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
-        const shardData = [W[2*g], W[2*g+1]];
-        const sm = mtx(shardData, {colorOf:()=>g, small:true});
-        sm.classList.add('fadeIn');
-        holders[g].insertBefore(sm, holders[g].firstChild);
-        gpuBoxes[g].mf.style.width = '83%';
-        await sleep(500);
-        gpuBoxes[g].bx.classList.remove('active');
-      }
-
-      // Phase 4: Complete
-      if(!alive(id)) return;
-      status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (rows 2i to 2i+1)';
-      status.classList.remove('active');
-    })();
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Full Matrix',
+          delay: 1200,
+          run: async () => {
+            status.textContent = '1. Full 8x8 weight matrix W on host';
+            status.classList.remove('active');
+            container.style.gap = '3px';
+            blocks.forEach(b=>{
+              b.querySelectorAll('.cell').forEach(c => { c.style.background=''; c.style.color=''; c.style.borderColor=''; c.classList.remove('dimmed'); });
+            });
+            gpuBoxes.forEach(gb => { gb.mf.style.width='0%'; gb.bx.classList.remove('active'); });
+            holders.forEach(h => { const sm = h.querySelector('.mtx'); if(sm) sm.remove(); });
+          }
+        },
+        {
+          name: 'Horizontal Slice',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '2. Slicing horizontally into four 2x8 row blocks';
+            status.classList.add('active');
+            container.style.gap = '14px';
+            blocks.forEach((b,g)=>{
+              b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+              b.classList.add('flash');
+            });
+          }
+        },
+        {
+          name: 'Load to GPUs',
+          delay: 1800,
+          run: async () => {
+            status.textContent = '3. Loading 2x8 row shards into GPU memory';
+            for(let g=0;g<4;g++){
+              if(!alive(id)) return;
+              gpuBoxes[g].bx.classList.add('active');
+              blocks[g].querySelectorAll('.cell').forEach(c => c.classList.add('dimmed'));
+              if(!holders[g].querySelector('.mtx')){
+                const shardData = [W[2*g], W[2*g+1]];
+                const sm = mtx(shardData, {colorOf:()=>g, small:true});
+                sm.classList.add('fadeIn');
+                holders[g].insertBefore(sm, holders[g].firstChild);
+              }
+              gpuBoxes[g].mf.style.width = '83%';
+              await sleep(350);
+              gpuBoxes[g].bx.classList.remove('active');
+            }
+            status.textContent = 'Complete: Each GPU holds 16 of the 64 numbers (rows 2i to 2i+1)';
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -731,23 +910,25 @@ P2.push({
     row.appendChild(xcol);
     body.appendChild(row);
     body.appendChild(el('div','bigNote','Prefill processes this entire 3x8 block in one go: no token-by-token loop. (The token-by-token loop is <b>decode</b>, with different bottlenecks.)'));
-    (async()=>{
-      await sleep(700);
-      for(let t=0;t<3;t++){
-        if(!alive(id)) return;
-        idTags[t].style.opacity='1';
-        await sleep(350); if(!alive(id)) return;
-        const re = rowEls[TOKS[t].id];
-        re.r.style.outline='1px solid var(--accent)';
-        re.m.querySelectorAll('.cell').forEach(paintInk);
-        re.tokl.style.color='var(--text)';
-        await sleep(500); if(!alive(id)) return;
-        xm.querySelectorAll('.cell').forEach(c=>{
-          if(+c.dataset.r===t){ c.textContent = E[t][+c.dataset.c]; c.classList.add('flash'); paintInk(c); }
-        });
-        await sleep(400);
-      }
-    })();
+
+    createStepper({
+      container: body,
+      id,
+      phases: TOKS.map((tk, t) => ({
+        name: `Token ${t+1} (${tk.t})`,
+        delay: 1200,
+        run: async () => {
+          idTags[t].style.opacity='1';
+          const re = rowEls[tk.id];
+          re.r.style.outline='1px solid var(--accent)';
+          re.m.querySelectorAll('.cell').forEach(paintInk);
+          re.tokl.style.color='var(--text)';
+          xm.querySelectorAll('.cell').forEach(c=>{
+            if(+c.dataset.r===t){ c.textContent = E[t][+c.dataset.c]; c.classList.add('flash'); paintInk(c); }
+          });
+        }
+      }))
+    });
   }
 });
 
@@ -781,22 +962,27 @@ P2.push({
     meter.appendChild(cnt); meter.appendChild(tw);
     meter.appendChild(el('div','caption','time on 1 GPU: rows are independent of each other, but one GPU still owns ALL of the work'));
     body.appendChild(meter);
-    (async()=>{
-      await sleep(500);
-      for(let c=0;c<8;c++){
-        if(!alive(id)) return;
-        wm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
-        await sleep(360); if(!alive(id)) return;
-        for(let t=0;t<3;t++){
-          const ycell = ym.querySelectorAll('.cell')[t*8+c];
-          ycell.textContent = YM[t][c]; ycell.classList.add('flash');
-          paintInk(ycell);
+
+    createStepper({
+      container: body,
+      id,
+      phases: [0, 2, 4, 6].map((cStart, stepI) => ({
+        name: `Cols ${cStart}-${cStart+1}`,
+        delay: 1100,
+        run: async () => {
+          for(let c = cStart; c < cStart+2; c++){
+            wm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
+            for(let t=0;t<3;t++){
+              const ycell = ym.querySelectorAll('.cell')[t*8+c];
+              ycell.textContent = YM[t][c]; ycell.classList.add('flash');
+              paintInk(ycell);
+            }
+            cnt.innerHTML = `multiply-adds: <b>${(c+1)*24}</b> / 192 (64 per token row)`;
+            tf.style.width = ((c+1)*12.5)+'%';
+          }
         }
-        cnt.innerHTML = `multiply-adds: <b>${(c+1)*24}</b> / 192 (64 per token row)`;
-        tf.style.transition='width .35s linear'; tf.style.width = ((c+1)*12.5)+'%';
-      }
-      wm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
-    })();
+      }))
+    });
   }
 });
 
@@ -849,52 +1035,66 @@ P2.push({
     meter.appendChild(tw);
     meter.appendChild(el('div','caption','time on 4 GPUs: 48 units (bar drawn to the same 192-unit scale as baseline)'));
     body.appendChild(meter);
-    (async()=>{
-      await sleep(500); if(!alive(id)) return;
-      const srcCells = bx.querySelectorAll('.cell');
-      parts.forEach(p=>p.bx.classList.add('active'));
-      for(let t=0;t<3;t++){
-        for(let c=0;c<8;c++){
-          const idx = t*8+c;
-          srcCells[idx].classList.add('flash');
-          paintInk(srcCells[idx]);
-          parts.forEach(p=>{
-            const cell = p.xm.querySelectorAll('.cell')[idx];
-            cell.textContent = E[t][c];
-            paintInk(cell);
-            cell.classList.add('flash');
-          });
-        }
-        await sleep(200); if(!alive(id)) return;
-      }
-      await sleep(350); if(!alive(id)) return;
 
-      for(let c=0;c<2;c++){
-        if(!alive(id)) return;
-        parts.forEach(p=>{
-          p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
-          p.xm.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
-        });
-        await sleep(500); if(!alive(id)) return;
-        parts.forEach(p=>{
-          for(let t=0;t<3;t++){
-            const yc = p.ym.querySelectorAll('.cell')[t*2+c];
-            yc.textContent = YM[t][2*p.g+c]; yc.classList.add('flash');
-            paint(yc, p.g);
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Broadcast X',
+          delay: 1100,
+          run: async () => {
+            const srcCells = bx.querySelectorAll('.cell');
+            parts.forEach(p=>p.bx.classList.add('active'));
+            for(let t=0;t<3;t++){
+              for(let c=0;c<8;c++){
+                const idx = t*8+c;
+                srcCells[idx].classList.add('flash');
+                paintInk(srcCells[idx]);
+                parts.forEach(p=>{
+                  const cell = p.xm.querySelectorAll('.cell')[idx];
+                  cell.textContent = E[t][c];
+                  paintInk(cell);
+                  cell.classList.add('flash');
+                });
+              }
+            }
           }
-          p.cnt.innerHTML = `<b>${(c+1)*24}</b>/48 MACs`;
-        });
-        tf.style.transition='width .5s linear'; tf.style.width = ((c+1)*12.5)+'%';
-        await sleep(350); if(!alive(id)) return;
-        parts.forEach(p=>{
-          p.xm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
-        });
-      }
-      parts.forEach(p=>{
-        p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
-        p.bx.classList.remove('active');
-      });
-    })();
+        },
+        {
+          name: 'Multiply Col 0',
+          delay: 1200,
+          run: async () => {
+            parts.forEach(p=>{
+              p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===0));
+              for(let t=0;t<3;t++){
+                const yc = p.ym.querySelectorAll('.cell')[t*2+0];
+                yc.textContent = YM[t][2*p.g+0]; yc.classList.add('flash');
+                paint(yc, p.g);
+              }
+              p.cnt.innerHTML = `<b>24</b>/48 MACs`;
+            });
+            tf.style.width = '12.5%';
+          }
+        },
+        {
+          name: 'Multiply Col 1',
+          delay: 1200,
+          run: async () => {
+            parts.forEach(p=>{
+              p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===1));
+              for(let t=0;t<3;t++){
+                const yc = p.ym.querySelectorAll('.cell')[t*2+1];
+                yc.textContent = YM[t][2*p.g+1]; yc.classList.add('flash');
+                paint(yc, p.g);
+              }
+              p.cnt.innerHTML = `<b>48</b>/48 MACs`;
+            });
+            tf.style.width = '25%';
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -956,34 +1156,60 @@ P2.push({
 
     body.appendChild(wrap);
 
-    (async()=>{
-      await sleep(600); if(!alive(id)) return;
-
-      status.textContent = '2. AllGather: GPUs broadcast their column strips to each other over NVLink';
-      status.classList.add('active');
-      commTag.style.background = INK; commTag.style.color = ONINK; commTag.style.borderColor = INK;
-      await sleep(1000); if(!alive(id)) return;
-
-      status.textContent = '3. Result: Every single GPU now holds the complete 3x8 matrix!';
-      for(let pieceG=0; pieceG<4; pieceG++){
-        if(!alive(id)) return;
-        bottomMatrices.forEach(fullM=>{
-          for(let t=0; t<3; t++){
-            for(let c=0; c<2; c++){
-              const cell = fullM.querySelectorAll('.cell')[t*8 + 2*pieceG + c];
-              cell.textContent = YM[t][2*pieceG + c];
-              paint(cell, pieceG);
-              cell.classList.add('flash');
-            }
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Local Strips',
+          delay: 1100,
+          run: async () => {
+            status.textContent = '1. Before exchange: Each GPU only holds its own 3x2 column strip';
+            status.classList.remove('active');
+            commTag.style.background = ''; commTag.style.color = ''; commTag.style.borderColor = '';
+            bottomMatrices.forEach(fullM => {
+              fullM.querySelectorAll('.cell').forEach(c => { c.textContent = ''; c.style.background = ''; c.style.borderColor = ''; });
+            });
+            bottomBoxes.forEach(bx => bx.classList.remove('active'));
+            check.innerHTML = '';
           }
-        });
-        await sleep(350);
-      }
-
-      bottomBoxes.forEach(bx=>bx.classList.add('active'));
-      check.innerHTML = `All 4 GPUs now hold the identical, complete 3x8 output (matching the single-GPU baseline bit-for-bit) <span class="okmark">✓</span>`;
-      status.classList.remove('active');
-    })();
+        },
+        {
+          name: '2. AllGather Sync',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '2. AllGather: GPUs broadcast their column strips to each other over NVLink';
+            status.classList.add('active');
+            commTag.style.background = INK; commTag.style.color = ONINK; commTag.style.borderColor = INK;
+            topGpuCards.forEach(tm => tm.classList.add('flash'));
+          }
+        },
+        {
+          name: '3. Full 3x8 on Every GPU',
+          delay: 1600,
+          run: async () => {
+            status.textContent = '3. Result: Every single GPU now holds the complete 3x8 matrix!';
+            for(let pieceG=0; pieceG<4; pieceG++){
+              if(!alive(id)) return;
+              bottomMatrices.forEach(fullM=>{
+                for(let t=0; t<3; t++){
+                  for(let c=0; c<2; c++){
+                    const cell = fullM.querySelectorAll('.cell')[t*8 + 2*pieceG + c];
+                    cell.textContent = YM[t][2*pieceG + c];
+                    paint(cell, pieceG);
+                    cell.classList.add('flash');
+                  }
+                }
+              });
+              await sleep(250);
+            }
+            bottomBoxes.forEach(bx=>bx.classList.add('active'));
+            check.innerHTML = `All 4 GPUs now hold the identical, complete 3x8 output (matching the single-GPU baseline bit-for-bit) <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -1078,77 +1304,107 @@ P2.push({
     wrap.appendChild(gpuRow);
     body.appendChild(wrap);
 
-    (async()=>{
-      await sleep(600); if(!alive(id)) return;
-
-      // Phase 2: Slicing X and W
-      status.textContent = '2. Slicing X vertically into 3x2 slices, and W horizontally into 2x8 shards';
-      status.classList.add('active');
-      xContainer.style.gap = '10px';
-      wContainer.style.gap = '8px';
-      xBlocks.forEach((b,g)=>{
-        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
-        b.classList.add('flash');
-      });
-      wBlocks.forEach((b,g)=>{
-        b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
-        b.classList.add('flash');
-      });
-      await sleep(1400); if(!alive(id)) return;
-
-      // Phase 3: Moving into GPUs
-      status.textContent = '3. Dispatch: Slices move into GPU 0, 1, 2, 3 in parallel';
-      dispatchTag.style.background = INK; dispatchTag.style.color = ONINK; dispatchTag.style.borderColor = INK;
-      for(let g=0; g<4; g++){
-        if(!alive(id)) return;
-        const p = parts[g];
-        p.bx.classList.add('active');
-        // Populate X slice
-        for(let t=0; t<3; t++) for(let c=0; c<2; c++){
-          const cell = p.xs.querySelectorAll('.cell')[t*2 + c];
-          cell.textContent = E[t][2*g + c];
-          paint(cell, g);
-          cell.classList.add('flash');
-        }
-        // Populate W shard
-        for(let r=0; r<2; r++) for(let c=0; c<8; c++){
-          const cell = p.sm.querySelectorAll('.cell')[r*8 + c];
-          cell.textContent = W[2*g + r][c];
-          paint(cell, g);
-          cell.classList.add('flash');
-        }
-        await sleep(350);
-      }
-      await sleep(400); if(!alive(id)) return;
-
-      // Phase 4: Parallel multiplication
-      status.textContent = '4. Parallel Math: 4 GPUs multiply (3x2) · (2x8) in parallel -> Each produces a 3x8 partial matrix';
-      for(let c=0; c<8; c++){
-        if(!alive(id)) return;
-        parts.forEach(p=>{
-          p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
-          p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
-        });
-        await sleep(220); if(!alive(id)) return;
-        parts.forEach(p=>{
-          for(let t=0; t<3; t++){
-            const cell = p.pm.querySelectorAll('.cell')[t*8 + c];
-            cell.textContent = rowPartialM[p.g][t][c];
-            paint(cell, p.g);
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Source Matrices',
+          delay: 1100,
+          run: async () => {
+            status.textContent = '1. Source: Input X (3x8) and Weight Matrix W (8x8)';
+            status.classList.remove('active');
+            xContainer.style.gap = '3px';
+            wContainer.style.gap = '3px';
+            xBlocks.forEach(b=>b.querySelectorAll('.cell').forEach(paintInk));
+            wBlocks.forEach(b=>b.querySelectorAll('.cell').forEach(c=>{ c.style.background=''; c.style.borderColor=''; }));
+            dispatchTag.style.background = ''; dispatchTag.style.color = ''; dispatchTag.style.borderColor = '';
+            parts.forEach(p=>{
+              p.xs.querySelectorAll('.cell').forEach(c=>{ c.textContent=''; c.style.background=''; c.style.borderColor=''; });
+              p.sm.querySelectorAll('.cell').forEach(c=>{ c.textContent=''; c.style.background=''; c.style.borderColor=''; });
+              p.pm.querySelectorAll('.cell').forEach(c=>{ c.textContent=''; c.style.background=''; c.style.borderColor=''; });
+              p.cnt.innerHTML = '<b>0</b>/48 MACs';
+              p.bx.classList.remove('active');
+            });
           }
-          p.cnt.innerHTML = `<b>${(c+1)*6}</b>/48 MACs`;
-        });
-        await sleep(140);
-      }
-      parts.forEach(p=>{
-        p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
-        p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
-        p.bx.classList.remove('active');
-      });
-
-      status.textContent = 'Complete: 4 GPUs produced four 3x8 partial matrices simultaneously';
-      status.classList.remove('active');
-    })();
+        },
+        {
+          name: '2. Slicing X & W',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '2. Slicing X vertically into 3x2 slices, and W horizontally into 2x8 shards';
+            status.classList.add('active');
+            xContainer.style.gap = '10px';
+            wContainer.style.gap = '8px';
+            xBlocks.forEach((b,g)=>{
+              b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+              b.classList.add('flash');
+            });
+            wBlocks.forEach((b,g)=>{
+              b.querySelectorAll('.cell').forEach(cell => paint(cell, g));
+              b.classList.add('flash');
+            });
+          }
+        },
+        {
+          name: '3. Dispatch to GPUs',
+          delay: 1500,
+          run: async () => {
+            status.textContent = '3. Dispatch: Slices move into GPU 0, 1, 2, 3 in parallel';
+            dispatchTag.style.background = INK; dispatchTag.style.color = ONINK; dispatchTag.style.borderColor = INK;
+            for(let g=0; g<4; g++){
+              if(!alive(id)) return;
+              const p = parts[g];
+              p.bx.classList.add('active');
+              for(let t=0; t<3; t++) for(let c=0; c<2; c++){
+                const cell = p.xs.querySelectorAll('.cell')[t*2 + c];
+                cell.textContent = E[t][2*g + c];
+                paint(cell, g);
+                cell.classList.add('flash');
+              }
+              for(let r=0; r<2; r++) for(let c=0; c<8; c++){
+                const cell = p.sm.querySelectorAll('.cell')[r*8 + c];
+                cell.textContent = W[2*g + r][c];
+                paint(cell, g);
+                cell.classList.add('flash');
+              }
+              await sleep(250);
+            }
+          }
+        },
+        {
+          name: '4. Multiply (3x2)·(2x8)',
+          delay: 1800,
+          run: async () => {
+            status.textContent = '4. Parallel Math: 4 GPUs multiply (3x2) · (2x8) in parallel -> Each produces a 3x8 partial matrix';
+            for(let c=0; c<8; c++){
+              if(!alive(id)) return;
+              parts.forEach(p=>{
+                p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.toggle('hl', +cell.dataset.c===c));
+                p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.add('hl'));
+              });
+              await sleep(180); if(!alive(id)) return;
+              parts.forEach(p=>{
+                for(let t=0; t<3; t++){
+                  const cell = p.pm.querySelectorAll('.cell')[t*8 + c];
+                  cell.textContent = rowPartialM[p.g][t][c];
+                  paint(cell, p.g);
+                }
+                p.cnt.innerHTML = `<b>${(c+1)*6}</b>/48 MACs`;
+              });
+              await sleep(120);
+            }
+            parts.forEach(p=>{
+              p.sm.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
+              p.xs.querySelectorAll('.cell').forEach(cell=>cell.classList.remove('hl'));
+              p.bx.classList.remove('active');
+            });
+            status.textContent = 'Complete: 4 GPUs produced four 3x8 partial matrices simultaneously';
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -1212,33 +1468,58 @@ P2.push({
 
     body.appendChild(wrap);
 
-    (async()=>{
-      await sleep(600); if(!alive(id)) return;
-
-      status.textContent = '2. AllReduce: GPUs broadcast and sum partial matrices over NVLink cables';
-      status.classList.add('active');
-      commTag.style.background = INK; commTag.style.color = ONINK; commTag.style.borderColor = INK;
-      topPartials.forEach(pm=>pm.classList.add('flash'));
-      await sleep(1000); if(!alive(id)) return;
-
-      status.textContent = '3. Result: Every single GPU receives the identical completed sum matrix Y';
-      for(let t=0;t<3;t++){
-        for(let c=0;c<8;c++){
-          if(!alive(id)) return;
-          bottomMatrices.forEach(fullM=>{
-            const sumCell = fullM.querySelectorAll('.cell')[t*8 + c];
-            sumCell.textContent = YM[t][c];
-            paintInk(sumCell);
-            sumCell.classList.add('flash');
-          });
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Partials',
+          delay: 1100,
+          run: async () => {
+            status.textContent = '1. Before sum: Each GPU holds an incomplete 3x8 partial matrix';
+            status.classList.remove('active');
+            commTag.style.background = ''; commTag.style.color = ''; commTag.style.borderColor = '';
+            bottomMatrices.forEach(fullM => {
+              fullM.querySelectorAll('.cell').forEach(c => { c.textContent = ''; c.style.background = ''; c.style.borderColor = ''; });
+            });
+            bottomBoxes.forEach(bx => bx.classList.remove('active'));
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: '2. AllReduce Sum',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '2. AllReduce: GPUs broadcast and sum partial matrices over NVLink cables';
+            status.classList.add('active');
+            commTag.style.background = INK; commTag.style.color = ONINK; commTag.style.borderColor = INK;
+            topPartials.forEach(pm=>pm.classList.add('flash'));
+          }
+        },
+        {
+          name: '3. Complete Output Y',
+          delay: 1600,
+          run: async () => {
+            status.textContent = '3. Result: Every single GPU receives the identical completed sum matrix Y';
+            for(let t=0;t<3;t++){
+              for(let c=0;c<8;c++){
+                if(!alive(id)) return;
+                bottomMatrices.forEach(fullM=>{
+                  const sumCell = fullM.querySelectorAll('.cell')[t*8 + c];
+                  sumCell.textContent = YM[t][c];
+                  paintInk(sumCell);
+                  sumCell.classList.add('flash');
+                });
+              }
+              await sleep(250);
+            }
+            bottomBoxes.forEach(bx=>bx.classList.add('active'));
+            check.innerHTML = `All 4 GPUs now hold the identical completed 3x8 matrix Y (matching the single-GPU output exactly) <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
         }
-        await sleep(350);
-      }
-
-      bottomBoxes.forEach(bx=>bx.classList.add('active'));
-      check.innerHTML = `All 4 GPUs now hold the identical completed 3x8 matrix Y (matching the single-GPU output exactly) <span class="okmark">✓</span>`;
-      status.classList.remove('active');
-    })();
+      ]
+    });
   }
 });
 
@@ -1296,42 +1577,56 @@ P2.push({
     flowWrap.appendChild(foot);
     body.appendChild(flowWrap);
 
-    (async()=>{
-      await sleep(500); if(!alive(id)) return;
-
-      // Phase 1: Attention compute
-      status.textContent = '1. Attention Block: 4 GPUs compute attention heads in local memory';
-      status.classList.add('active');
-      attC1.style.borderColor='var(--accent)'; attC1.style.color='var(--accent)'; attC1.classList.add('flash');
-      await sleep(1100); if(!alive(id)) return;
-
-      attConn.style.background='var(--okWash)'; attConn.style.color='var(--ok)'; attConn.style.borderColor='var(--ok)';
-      attC2.style.borderColor='var(--accent)'; attC2.style.color='var(--accent)'; attC2.classList.add('flash');
-      await sleep(1100); if(!alive(id)) return;
-
-      // Phase 2: Attention Sync
-      status.textContent = '2. Attention Sync: All 4 GPUs perform AllReduce #1 over NVLink';
-      attSync.style.background=INK; attSync.style.color=ONINK; attSync.style.borderColor=INK; attSync.classList.add('flash');
-      await sleep(1300); if(!alive(id)) return;
-
-      // Phase 3: MLP compute
-      status.textContent = '3. MLP Block: 4 GPUs expand & compress vectors in local memory';
-      mlpC1.style.borderColor='var(--accent)'; mlpC1.style.color='var(--accent)'; mlpC1.classList.add('flash');
-      await sleep(1100); if(!alive(id)) return;
-
-      mlpConn.style.background='var(--okWash)'; mlpConn.style.color='var(--ok)'; mlpConn.style.borderColor='var(--ok)';
-      mlpC2.style.borderColor='var(--accent)'; mlpC2.style.color='var(--accent)'; mlpC2.classList.add('flash');
-      await sleep(1100); if(!alive(id)) return;
-
-      // Phase 4: MLP Sync
-      status.textContent = '4. MLP Sync: All 4 GPUs perform AllReduce #2 over NVLink';
-      mlpSync.style.background=INK; mlpSync.style.color=ONINK; mlpSync.style.borderColor=INK; mlpSync.classList.add('flash');
-      await sleep(1400); if(!alive(id)) return;
-
-      // Complete
-      status.textContent = 'Complete: 1 Full Layer done with exactly 2 AllReduce syncs';
-      status.classList.remove('active');
-    })();
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Attention Math',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '1. Attention Block: 4 GPUs compute attention heads in local memory';
+            status.classList.add('active');
+            attC1.style.borderColor='var(--accent)'; attC1.style.color='var(--accent)'; attC1.classList.add('flash');
+            attConn.style.background='var(--okWash)'; attConn.style.color='var(--ok)'; attConn.style.borderColor='var(--ok)';
+            attC2.style.borderColor='var(--accent)'; attC2.style.color='var(--accent)'; attC2.classList.add('flash');
+            attSync.style.background=''; attSync.style.color=''; attSync.style.borderColor='';
+            mlpC1.style.borderColor=''; mlpC1.style.color='';
+            mlpConn.style.background=''; mlpConn.style.color=''; mlpConn.style.borderColor='';
+            mlpC2.style.borderColor=''; mlpC2.style.color='';
+            mlpSync.style.background=''; mlpSync.style.color=''; mlpSync.style.borderColor='';
+          }
+        },
+        {
+          name: '2. Attention Sync',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '2. Attention Sync: All 4 GPUs perform AllReduce #1 over NVLink';
+            attSync.style.background=INK; attSync.style.color=ONINK; attSync.style.borderColor=INK; attSync.classList.add('flash');
+          }
+        },
+        {
+          name: '3. MLP Math',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '3. MLP Block: 4 GPUs expand & compress vectors in local memory';
+            mlpC1.style.borderColor='var(--accent)'; mlpC1.style.color='var(--accent)'; mlpC1.classList.add('flash');
+            mlpConn.style.background='var(--okWash)'; mlpConn.style.color='var(--ok)'; mlpConn.style.borderColor='var(--ok)';
+            mlpC2.style.borderColor='var(--accent)'; mlpC2.style.color='var(--accent)'; mlpC2.classList.add('flash');
+          }
+        },
+        {
+          name: '4. MLP Sync',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '4. MLP Sync: All 4 GPUs perform AllReduce #2 over NVLink';
+            mlpSync.style.background=INK; mlpSync.style.color=ONINK; mlpSync.style.borderColor=INK; mlpSync.classList.add('flash');
+            status.textContent = 'Complete: 1 Full Layer done with exactly 2 AllReduce syncs';
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
   }
 });
 
@@ -1419,54 +1714,67 @@ P2.push({
 
     body.appendChild(wrap);
 
-    (async()=>{
-      await sleep(500); if(!alive(id)) return;
-
-      // Phase 1: Layer 1 computes
-      status.textContent = '1. Layer 1: 4 GPUs calculate in parallel -> AllReduce produces Layer 1 output (3x8)';
-      status.classList.add('active');
-      l1GpuBoxes.forEach(b=>b.classList.add('active'));
-      await sleep(1000); if(!alive(id)) return;
-
-      l1OutMtx.querySelectorAll('.cell').forEach(cell=>{
-        paintInk(cell); cell.classList.add('flash');
-      });
-      l1GpuBoxes.forEach(b=>b.classList.remove('active'));
-      await sleep(1200); if(!alive(id)) return;
-
-      // Phase 2: Flow from Layer 1 to Layer 2
-      status.textContent = '2. Layer 1 Output flows directly into Layer 2 as its input (no weights move)';
-      flowTag.style.background=INK; flowTag.style.color=ONINK; flowTag.style.borderColor=INK; flowTag.classList.add('flash');
-      l2Box.style.opacity='1';
-      await sleep(1300); if(!alive(id)) return;
-
-      // Phase 3: Layer 2 computes
-      status.textContent = '3. Layer 2: 4 GPUs calculate in parallel -> AllReduce produces Layer 2 output (3x8)';
-      l2GpuBoxes.forEach(b=>b.classList.add('active'));
-      await sleep(1000); if(!alive(id)) return;
-
-      l2OutMtx.querySelectorAll('.cell').forEach(cell=>{
-        paintInk(cell); cell.classList.add('flash');
-      });
-      l2GpuBoxes.forEach(b=>b.classList.remove('active'));
-      await sleep(1200); if(!alive(id)) return;
-
-      // Phase 4: Fast cascade through all 94 layers
-      status.textContent = '4. Rhythm repeats across all 94 layers -> First token generated!';
-      for(let l=0;l<layerRows.length;l++){
-        if(!alive(id)) return;
-        layerRows[l].gcells.forEach((c,g)=>{ c.style.boxShadow=`3px 3px 0 -1px ${GC[g]}`; c.style.borderColor=GC[g]; });
-        await sleep(220); if(!alive(id)) return;
-        layerRows[l].gcells.forEach(c=>{ c.style.boxShadow='none'; });
-        layerRows[l].sync.style.background=INK; layerRows[l].sync.style.color=ONINK; layerRows[l].sync.style.borderColor=INK;
-        await sleep(150); if(!alive(id)) return;
-        layerRows[l].sync.style.background=''; layerRows[l].sync.style.color=''; layerRows[l].sync.style.borderColor='';
-      }
-      if(!alive(id)) return;
-      tok.style.opacity='1';
-      status.textContent = 'Complete: Prompt passed through 94 layers on 4 GPUs -> Token generated!';
-      status.classList.remove('active');
-    })();
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Layer 1',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '1. Layer 1: 4 GPUs calculate in parallel -> AllReduce produces Layer 1 output (3x8)';
+            status.classList.add('active');
+            l1GpuBoxes.forEach(b=>b.classList.add('active'));
+            l1OutMtx.querySelectorAll('.cell').forEach(cell=>{
+              paintInk(cell); cell.classList.add('flash');
+            });
+            flowTag.style.background=''; flowTag.style.color=''; flowTag.style.borderColor='';
+            l2Box.style.opacity='0.4';
+            l2GpuBoxes.forEach(b=>b.classList.remove('active'));
+            tok.style.opacity='0';
+          }
+        },
+        {
+          name: '2. Slide to Layer 2',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '2. Layer 1 Output flows directly into Layer 2 as its input (no weights move)';
+            flowTag.style.background=INK; flowTag.style.color=ONINK; flowTag.style.borderColor=INK; flowTag.classList.add('flash');
+            l2Box.style.opacity='1';
+          }
+        },
+        {
+          name: '3. Layer 2',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '3. Layer 2: 4 GPUs calculate in parallel -> AllReduce produces Layer 2 output (3x8)';
+            l2GpuBoxes.forEach(b=>b.classList.add('active'));
+            l2OutMtx.querySelectorAll('.cell').forEach(cell=>{
+              paintInk(cell); cell.classList.add('flash');
+            });
+          }
+        },
+        {
+          name: '4. Cascade to L94',
+          delay: 1600,
+          run: async () => {
+            status.textContent = '4. Rhythm repeats across all 94 layers -> First token generated!';
+            for(let l=0;l<layerRows.length;l++){
+              if(!alive(id)) return;
+              layerRows[l].gcells.forEach((c,g)=>{ c.style.boxShadow=`3px 3px 0 -1px ${GC[g]}`; c.style.borderColor=GC[g]; });
+              await sleep(180); if(!alive(id)) return;
+              layerRows[l].gcells.forEach(c=>{ c.style.boxShadow='none'; });
+              layerRows[l].sync.style.background=INK; layerRows[l].sync.style.color=ONINK; layerRows[l].sync.style.borderColor=INK;
+              await sleep(120); if(!alive(id)) return;
+              layerRows[l].sync.style.background=''; layerRows[l].sync.style.color=''; layerRows[l].sync.style.borderColor='';
+            }
+            tok.style.opacity='1';
+            status.textContent = 'Complete: Prompt passed through 94 layers on 4 GPUs -> Token generated!';
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
   }
 });
 
