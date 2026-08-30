@@ -1145,7 +1145,15 @@ P2.push({
               }
               p.cnt.innerHTML = `<b>48</b>/48 MACs`;
             });
-     /* ---- 2.5 Combining results from Column-Parallel ---- */
+            tf.style.width = '25%';
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 2.5 Combining results from Column-Parallel ---- */
 P2.push({
   title:'Combining Results: How do we combine results from multiple GPUs?',
   text:`<h2>How do we combine the results from 4 GPUs?</h2>
@@ -1613,6 +1621,7 @@ P2.push({
             status.classList.remove('active');
           }
         }
+      ]
     });
   }
 });
