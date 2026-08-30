@@ -620,20 +620,35 @@ P1.push({
 P1.push({
   title:'Sharding style A: Column Cut (splitting weights vertically into 8x2 blocks)',
   text:`<h2>Cut W vertically into columns</h2>
-    <p>A layer stores fixed weight matrices like <code>W_Q, W_K, W_V, W_O</code> (Attention) and <code>W_up, W_down</code> (MLP). Each is a static grid of numbers loaded on the GPUs from the start.</p>
-    <div class="note"><b>The Camera Lens Analogy:</b> <code>W_K</code> and <code>W_V</code> are <i>camera lenses</i> (fixed physical tools on the GPU). The <b>KV cache</b> is the <i>photo album</i> generated dynamically when prompt tokens pass through those lenses. The model stores the lenses from day one! (Similarly, <code>W_up</code> expands vector width like 4096 -> 14336 for processing, and <code>W_down</code> compresses it back 14336 -> 4096).</div>
-    <p>In a <b>column cut</b>, we slice the matrix vertically into 4 column blocks. On our 8x8 stand-in:</p>
-    <p>GPU 0 gets columns 0-1, GPU 1 gets columns 2-3, GPU 2 gets 4-5, and GPU 3 gets 6-7.</p>
+    <p>Every single weight matrix in the model is sliced across all 4 GPUs.</p>
+    <p>In a <b>Column Cut</b>, we slice the matrix vertically into 4 column blocks. This cut is used on <b>all input-expansion matrices</b> in every layer:</p>
+    <p>• <b>Attention:</b> <code>W_Q, W_K, W_V</code> (splits attention heads across the 4 GPUs)<br>
+       • <b>MLP:</b> <code>W_up</code> (splits feature expansion across the 4 GPUs)</p>
+    <div class="note"><b>The Camera Lens Analogy:</b> <code>W_K</code> and <code>W_V</code> are <i>camera lenses</i> (fixed physical tools on the GPU). The <b>KV cache</b> is the <i>photo album</i> generated dynamically when prompt tokens pass through those lenses. The model stores the lenses from day one!</div>
+    <p>On our 8x8 stand-in: GPU 0 gets columns 0-1, GPU 1 gets columns 2-3, GPU 2 gets 4-5, and GPU 3 gets 6-7.</p>
     <div class="key">Each GPU holds an <b>8x2 shard</b> (16 numbers). Together, the four blocks make up the complete weight matrix.</div>`,
   setup(body, id){
     const top = el('div','col');
-    const chips = el('div'); chips.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
-    ['W_Q','W_K','W_V','W_O','W_up','W_down'].forEach((n,i)=>{
-      const c = el('div','chip',n);
-      if(i===0){ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)'; }
+    const chips = el('div'); chips.style.cssText='display:flex;gap:8px;flex-wrap:wrap;justify-content:center;';
+    const matrixDefs = [
+      {name:'W_Q', type:'Col Cut'},
+      {name:'W_K', type:'Col Cut'},
+      {name:'W_V', type:'Col Cut'},
+      {name:'W_up', type:'Col Cut'},
+      {name:'W_O', type:'Row Cut'},
+      {name:'W_down', type:'Row Cut'}
+    ];
+    matrixDefs.forEach(m => {
+      const isCol = m.type === 'Col Cut';
+      const c = el('div','chip', `${m.name} <small style="font-size:9.5px;opacity:.85">(${m.type})</small>`);
+      if(isCol){
+        c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)';
+      } else {
+        c.style.opacity='0.45';
+      }
       chips.appendChild(c);
     });
-    top.appendChild(el('div','caption','one layer stores these weight grids: we demonstrate column slicing on W:'));
+    top.appendChild(el('div','caption','All 4 highlighted matrices below use Column Cuts across the 4 GPUs:'));
     top.appendChild(chips);
 
     const status = el('div','statusBadge','1. Full 8x8 weight matrix W on host');
@@ -736,18 +751,33 @@ P1.push({
   title:'Sharding style B: Row Cut (splitting weights horizontally into 2x8 blocks)',
   text:`<h2>Cut W horizontally into rows</h2>
     <p>The other way to slice a weight matrix is <b>by rows</b>.</p>
-    <p>In a <b>row cut</b>, we slice the matrix horizontally into 4 row blocks. On our 8x8 stand-in:</p>
-    <p>GPU 0 gets rows 0-1, GPU 1 gets rows 2-3, GPU 2 gets 4-5, and GPU 3 gets rows 6-7.</p>
-    <div class="key">Each GPU holds a <b>2x8 shard</b> (16 numbers). Column cut vs Row cut determines whether the output needs <b>AllGather</b> (concatenation) or <b>AllReduce</b> (summation).</div>`,
+    <p>In a <b>Row Cut</b>, we slice the matrix horizontally into 4 row blocks. This cut is used on <b>all projection-compressing matrices</b> to consume the local pieces from the Column Cut:</p>
+    <p>• <b>Attention:</b> <code>W_O</code> (combines local attention heads)<br>
+       • <b>MLP:</b> <code>W_down</code> (compresses expanded features back to 4096)</p>
+    <p>On our 8x8 stand-in: GPU 0 gets rows 0-1, GPU 1 gets rows 2-3, GPU 2 gets 4-5, and GPU 3 gets rows 6-7.</p>
+    <div class="key">Each GPU holds a <b>2x8 shard</b> (16 numbers). Column Cut vs Row Cut determines whether the output needs <b>AllGather</b> (concatenation) or <b>AllReduce</b> (summation).</div>`,
   setup(body, id){
     const top = el('div','col');
-    const chips = el('div'); chips.style.cssText='display:flex;gap:6px;flex-wrap:wrap;justify-content:center;';
-    ['W_Q','W_K','W_V','W_O','W_up','W_down'].forEach((n,i)=>{
-      const c = el('div','chip',n);
-      if(i===1){ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)'; }
+    const chips = el('div'); chips.style.cssText='display:flex;gap:8px;flex-wrap:wrap;justify-content:center;';
+    const matrixDefs = [
+      {name:'W_Q', type:'Col Cut'},
+      {name:'W_K', type:'Col Cut'},
+      {name:'W_V', type:'Col Cut'},
+      {name:'W_up', type:'Col Cut'},
+      {name:'W_O', type:'Row Cut'},
+      {name:'W_down', type:'Row Cut'}
+    ];
+    matrixDefs.forEach(m => {
+      const isRow = m.type === 'Row Cut';
+      const c = el('div','chip', `${m.name} <small style="font-size:9.5px;opacity:.85">(${m.type})</small>`);
+      if(isRow){
+        c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; c.style.boxShadow='3px 3px 0 -1px var(--accent)';
+      } else {
+        c.style.opacity='0.45';
+      }
       chips.appendChild(c);
     });
-    top.appendChild(el('div','caption','demonstrating row slicing on W:'));
+    top.appendChild(el('div','caption','Both highlighted matrices below use Row Cuts across the 4 GPUs:'));
     top.appendChild(chips);
 
     const status = el('div','statusBadge','1. Full 8x8 weight matrix W on host');
