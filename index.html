@@ -322,7 +322,7 @@ P1.push({
   text:`<h2>Why split at all?</h2>
     <p><b>235B parameters.</b> In BF16 (2 bytes each) that is ~<b>470 GB of weights</b> — an H100 has 80 GB. The model physically cannot live on one GPU.</p>
     <p>So we take <b>4 GPUs</b> and give each one a piece. The whole question of this simulation: <b>which piece?</b></p>
-    <div class="note"><b>Reality check:</b> this is a MoE model — 235B total but only <b>22B active</b> per token (8 of 128 experts fire). Production setups often place experts via <i>expert parallelism</i>. Here we use dense <b>tensor parallelism</b> on the weight matrices, because that's the mental model that explains prefill speed — and it's exactly how the attention weights are split in practice.</div>`,
+    <div class="note"><b>Mental Model First:</b> Think of this as a standard dense transformer. We use Qwen's numbers because it's a real model that won't fit on one card. <i>(In real production, Qwen is MoE with 22B active parameters per token where experts can be placed across GPUs; but whether dense or MoE, the core problem is identical: how to slice weight matrices across GPUs and multiply them without communication bottlenecks.)</i></div>`,
   setup(body){
     const card = el('div','modelCard fadeIn');
     card.appendChild(el('h3','','Qwen3-235B-A22B'));
@@ -801,16 +801,24 @@ P2.push({
 P2.push({
   title:'The other cut: rows. Now every GPU makes a PARTIAL Y — AllReduce sums them',
   text:`<h2>Where AllReduce actually comes from</h2>
-    <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). Watch the top: X is broadcast to all four, but a row-split GPU can only use the <b>2 entries that line up with the rows it holds</b> — row r of W is multiplied by entry r of X, so 2 rows means 2 entries. Each GPU then sweeps its shard column by column, computing <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… which is only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU saw only 2.</p>
-    <p><i>Display note:</i> this step deliberately shows only ONE row of the block — "The", the first token — because with all 3 tokens the partials become four 3×8 blocks and the screen drowns in numbers. In reality all rows are AllReduced together in one shot, exactly like the previous steps.</p>
-    <p><b>AllReduce</b> = all GPUs pool their partial vectors, sum element-wise, and <i>everyone</i> ends up holding the identical total. Look: the four weird partial rows add up to exactly the same Y again.</p>
-    <div class="key"><b>Why both cuts exist:</b> a layer chains two matmuls (up-projection → down-projection). Make the 1st <b>column-split</b> and the 2nd <b>row-split</b>, and the outputs of the 1st are already exactly the input slices the 2nd needs — <b>zero communication in between</b>. Only ONE AllReduce at the end of the block. That's Megatron-style tensor parallelism.</div>`,
+    <p>Split W <b>by rows</b> instead: GPU i keeps rows 2i–2i+1 (2×8). Watch the top: X is broadcast to all four, but a row-split GPU can only use the <b>2 entries that line up with the rows it holds</b> — row r of W is multiplied by entry r of X, so 2 rows means 2 entries.</p>
+    <p>Each GPU then sweeps its shard column by column, computing <code>(1×2)·(2×8)</code> → a full-width 1×8 vector… which is only <b>part of the sum</b>. Every entry of Y needs contributions from all 8 rows, and each GPU only saw 2 rows.</p>
+    <p><i>Visual note:</i> We highlight row 0 ("The") while rows 1–2 ("cat", "sat") run identically in parallel in the background, keeping the on-screen math clean and readable.</p>
+    <p><b>AllReduce</b> = all GPUs pool their partial vectors over interconnect wires, sum element-wise, and <i>everyone</i> ends up holding the identical total. Look: the four partial rows add up to exactly the same Y again.</p>
+    <div class="key"><b>Why both cuts exist (Megatron-LM pattern):</b>
+      A transformer block chains two matmuls back-to-back (e.g. <code>W_up</code> then <code>W_down</code>, or <code>QKV</code> then <code>Out</code>):<br>
+      ① <b>First matmul (Column-Split):</b> broadcast input → each GPU computes its column tile (<b>0 communication!</b>).<br>
+      ② <b>Second matmul (Row-Split):</b> each GPU feeds its column tile directly into its row shard.<br>
+      ③ <b>The payoff:</b> Zero communication between the two matmuls! You only do <b>ONE AllReduce</b> at the end of the entire block.</div>`,
   setup(body, id){
     const bc = el('div','col');
-    const xFull = mtx([X]);
-    xFull.querySelectorAll('.cell').forEach(paintInk);
+    const xFull = mtx(E, {small:true});
+    xFull.querySelectorAll('.cell').forEach(cell=>{
+      if(+cell.dataset.r===0){ paintInk(cell); }
+      else { cell.classList.add('dimmed'); cell.style.opacity='0.35'; }
+    });
     bc.appendChild(xFull);
-    bc.appendChild(el('div','caption','X — the "The" row (1×8, really 1×4096) — broadcast to all 4 GPUs.<br>A row-split GPU reads only the 2 entries that line up with the rows it owns ↓'));
+    bc.appendChild(el('div','caption','X (3×8 prompt) — row 0 ("The") highlighted for animation<br>(rows for "cat" & "sat" compute identically in parallel; showing 1 row to keep math readable) ↓'));
     body.appendChild(bc);
     const row = el('div','row'); row.style.marginTop='14px';
     const parts=[];
@@ -844,7 +852,7 @@ P2.push({
     const check = el('div','caption','');
     ar.appendChild(stackBox); ar.appendChild(sum ? check : check);
     body.appendChild(ar);
-    const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical full Y</b> — exactly what they need to broadcast-start the next layer. Cost: one exchange of a tiny 1×8 (really 1×4096) vector over NVLink, vs. re-doing 16.7M multiply-adds. Cheap — but not free. This is the "communication tax" you\'ll see in the TTFT race.');
+    const foot = el('div','bigNote','After AllReduce, <b>all four GPUs hold the identical full Y</b> — ready to start the next layer. <b>Why does AllReduce cost time?</b> Inside a single GPU, memory bandwidth is ~3.35 TB/s (HBM3). High-speed NVLink wires between GPUs are fast (~900 GB/s) but still ~4× slower than on-chip memory. Exchanging vectors across GPUs is cheap, but not zero-cost — this is the "communication tax" in the race.');
     body.appendChild(foot);
     (async()=>{
       await sleep(500); if(!alive(id)) return;
@@ -905,10 +913,10 @@ P2.push({
 P2.push({
   title:'Prefill = this rhythm, 94 times: compute in parallel → one AllReduce → next layer',
   text:`<h2>The full forward pass</h2>
-    <p>Layer 1's output (after its AllReduce, identical on all GPUs) <b>is</b> layer 2's input. No data needs to "move to the next GPU" — the next layer's shards are already sitting on the same four GPUs.</p>
-    <p>So prefill is a drumbeat:</p>
-    <p><b>compute ¼-size matmuls on 4 GPUs → AllReduce → compute → AllReduce → …</b> ×94 layers.</p>
-    <p>The four cells lifting off the page together are the GPUs working simultaneously; the inverted <code>AllReduce</code> tag is the sync between layers.</p>`,
+    <p>Layer 1's output (after its AllReduce, identical on all GPUs) <b>is</b> layer 2's input. No weights move between GPUs — every GPU already holds its slices of layer 2.</p>
+    <p>Because Column-Parallel and Row-Parallel are paired together, each layer needs only <b>one sync point</b>. Prefill becomes a clean rhythm:</p>
+    <p><b>[Col-Matmul → Row-Matmul on 4 GPUs in parallel] → [One AllReduce Sync] → Next Layer</b> ×94 times.</p>
+    <p>The four bars lifting together show all GPUs working simultaneously; the <code>AllReduce</code> tag is the quick sync before the next layer begins.</p>`,
   setup(body, id){
     const chain = el('div','col');
     const rows=[];
@@ -956,7 +964,11 @@ P2.push({
   text:`<h2>Race through 94 layers</h2>
     <p>Per layer (per weight matrix, per token): the 1-GPU lane pays <b>4 units of math</b>. The 4-GPU lane pays <b>1 unit of math + ~0.25 units of AllReduce tax</b>.</p>
     <p>Over 94 layers: 376 units vs ~117 units → <b>~3.2× faster to the first token</b>, not 4×. The gap IS the communication cost — visible as the ochre slivers in the bottom lane.</p>
-    <div class="key"><b>The complete mental model:</b><br>① every layer's weight matrices are sliced across all GPUs (a shard = a block of raw weight numbers);<br>② prefill broadcasts the input, each GPU does a ¼-size matmul — parallel wall-clock win;<br>③ column-cut pieces <i>concatenate</i>, row-cut partials <i>AllReduce-sum</i> — either way, provably identical to the one big matmul;<br>④ one AllReduce per block, 94 layers of drumbeat, first token arrives ~3× sooner.</div>
+    <div class="key"><b>The complete mental model:</b><br>
+      ① <b>Sharding:</b> Every weight matrix is sliced into blocks across all GPUs (¼ of every layer per GPU).<br>
+      ② <b>Parallel Compute:</b> Prefill broadcasts activations; each GPU computes a ¼-size matmul — wall-clock speedup.<br>
+      ③ <b>Column vs Row:</b> Column-split shards <i>concatenate</i>; row-split shards <i>AllReduce-sum</i>. Combining Col → Row means only 1 AllReduce per block.<br>
+      ④ <b>Hardware Reality:</b> Interconnect wires (NVLink) add a small communication overhead, yielding ~3.2× real-world speedup on 4 GPUs.</div>
     <div class="note">Caveat kept honest: this model is MoE, so its FFN experts are usually split by <i>expert</i> parallelism in production, attention by tensor parallelism. And 470 GB BF16 needs H200-class cards or FP8. Neither changes the logic you just watched.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='26px';
