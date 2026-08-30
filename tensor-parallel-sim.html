@@ -1093,107 +1093,94 @@ P2.push({
   }
 });
 
-/* ---- 2.8 chaining two multiplications ---- */
+/* ---- 2.8 Attention & MLP halves ---- */
 P2.push({
-  title:'Chaining Two Multiplications: Zero communication until the end',
-  text:`<h2>Two steps of math, only ONE network sync</h2>
-    <p>Inside every transformer layer, there are two matrix multiplications back-to-back (expanding the token vector, then shrinking it back).</p>
-    <p>If GPUs had to stop and exchange data over cables after every single multiplication, the network would become an enormous bottleneck.</p>
-    <p><b>The smart combination:</b></p>
-    <p>1. <b>First math step (Column Cut):</b> GPU 0 computes columns 0-1 and keeps them in its local on-chip cache.</p>
-    <p>2. <b>Second math step (Row Cut):</b> GPU 0's row shard only requires columns 0-1! It consumes its own local data directly without any network transfer.</p>
-    <div class="key"><b>The payoff:</b> Two full matrix multiplications run at full speed with <b>zero intermediate communication</b>. The GPUs talk over NVLink cables only once at the end using <b>one AllReduce</b>.</div>`,
+  title:'Inside One Layer: Attention & MLP (Two Halves, Two Syncs)',
+  text:`<h2>Attention and MLP: Why both cuts are needed</h2>
+    <p>Every transformer layer has two distinct sub-blocks:</p>
+    <p>1. <b>Attention Block:</b> Tokens look at and communicate with each other.<br>
+       • <b>First Math (Column Cut):</b> Slices <code>W_Q, W_K, W_V</code> into attention heads across the 4 GPUs.<br>
+       • <b>Second Math (Row Cut):</b> Slices <code>W_O</code> (Output Projection) to consume those local heads.<br>
+       • <b>Sync:</b> 1 AllReduce sum.</p>
+    <p>2. <b>MLP Block:</b> Tokens process facts and features individually.<br>
+       • <b>First Math (Column Cut):</b> Slices <code>W_up</code> to expand vector width (4096 -> 14,336).<br>
+       • <b>Second Math (Row Cut):</b> Slices <code>W_down</code> to compress vector width (14,336 -> 4096).<br>
+       • <b>Sync:</b> 1 AllReduce sum.</p>
+    <div class="key"><b>The Grand Total:</b> Exactly <b>2 AllReduces per layer</b> (one for Attention, one for MLP). Inside each sub-block, data stays inside local GPU chip memory with zero network latency.</div>`,
   setup(body, id){
-    const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='860px';
+    const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='880px';
 
-    const status = el('div','statusBadge','1. All 4 GPUs compute column multiplication in parallel');
+    const status = el('div','statusBadge','1. Attention Block: 4 GPUs compute QKV heads locally');
     flowWrap.appendChild(status);
 
-    const stage1 = el('div','row'); stage1.style.gap='12px';
-    const gpuCards = [];
+    const blocksRow = el('div','row'); blocksRow.style.gap='18px'; blocksRow.style.width='100%';
 
-    for(let g=0;g<4;g++){
-      const inner = el('div','col'); inner.style.gap='8px';
-      
-      const c1 = el('div','chip',`1. Column Math<br><small style="color:var(--dim)">makes cols ${2*g}-${2*g+1}</small>`);
-      inner.appendChild(c1);
-      
-      const conn = el('div','tag','↓ local on-chip memory (0 network transfer) ↓');
-      conn.style.fontSize = '9px';
-      inner.appendChild(conn);
-      
-      const c2 = el('div','chip',`2. Row Math<br><small style="color:var(--dim)">uses cols ${2*g}-${2*g+1}</small>`);
-      inner.appendChild(c2);
-      
-      const box = gpuBox(g, inner);
-      stage1.appendChild(box);
-      gpuCards.push({box, c1, conn, c2, g});
-    }
-    flowWrap.appendChild(stage1);
+    // Attention sub-block visual
+    const attCol = el('div','col'); attCol.style.flex='1'; attCol.style.minWidth='280px';
+    attCol.appendChild(el('div','caption','<b>Part 1: Attention Sub-Block</b> (tokens talk to each other)'));
+    const attFrame = el('div','col'); attFrame.style.cssText='border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);width:100%;gap:8px;';
+    const attC1 = el('div','chip','1. Col Cut (W_Q, W_K, W_V)<br><small style="color:var(--dim)">computes attention heads</small>');
+    const attConn = el('div','tag','↓ local on-chip RAM (0 network delay) ↓');
+    const attC2 = el('div','chip','2. Row Cut (W_O Output Projection)<br><small style="color:var(--dim)">combines heads locally</small>');
+    const attSync = el('div','tag','Sync #1: AllReduce across NVLink');
+    attSync.style.cssText+=';font-weight:700;padding:4px 10px;margin-top:4px;';
+    attFrame.appendChild(attC1); attFrame.appendChild(attConn); attFrame.appendChild(attC2); attFrame.appendChild(attSync);
+    attCol.appendChild(attFrame);
+    blocksRow.appendChild(attCol);
 
-    const commCol = el('div','col'); commCol.style.width='100%'; commCol.style.alignItems='center'; commCol.style.marginTop='6px';
-    commCol.appendChild(el('div','caption','interconnect cables (NVLink ~900 GB/s)'));
-    const commWire = el('div');
-    commWire.style.cssText = 'width:100%;max-width:680px;height:6px;background:var(--line2);border-radius:3px;position:relative;overflow:hidden;margin:4px 0;';
-    const pulse = el('div');
-    pulse.style.cssText = 'height:100%;width:0%;background:linear-gradient(90deg,var(--g0),var(--g1),var(--g2),var(--g3));transition:width 1.2s ease;';
-    commWire.appendChild(pulse);
-    commCol.appendChild(commWire);
+    // MLP sub-block visual
+    const mlpCol = el('div','col'); mlpCol.style.flex='1'; mlpCol.style.minWidth='280px';
+    mlpCol.appendChild(el('div','caption','<b>Part 2: MLP Sub-Block</b> (tokens process knowledge)'));
+    const mlpFrame = el('div','col'); mlpFrame.style.cssText='border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);width:100%;gap:8px;';
+    const mlpC1 = el('div','chip','1. Col Cut (W_up)<br><small style="color:var(--dim)">expands width: 4096 -> 14,336</small>');
+    const mlpConn = el('div','tag','↓ local on-chip RAM (0 network delay) ↓');
+    const mlpC2 = el('div','chip','2. Row Cut (W_down)<br><small style="color:var(--dim)">compresses width: 14,336 -> 4096</small>');
+    const mlpSync = el('div','tag','Sync #2: AllReduce across NVLink');
+    mlpSync.style.cssText+=';font-weight:700;padding:4px 10px;margin-top:4px;';
+    mlpFrame.appendChild(mlpC1); mlpFrame.appendChild(mlpConn); mlpFrame.appendChild(mlpC2); mlpFrame.appendChild(mlpSync);
+    mlpCol.appendChild(mlpFrame);
+    blocksRow.appendChild(mlpCol);
 
-    const syncTag = el('div','tag','ONE AllReduce Sync at the end of the block');
-    syncTag.style.cssText += ';font-size:11.5px;padding:6px 16px;background:var(--panel);border:1px solid var(--line2);color:var(--text);';
-    commCol.appendChild(syncTag);
-    commCol.appendChild(el('div','caption','all 4 GPUs exchange partial sums once -> ready for next layer'));
-    flowWrap.appendChild(commCol);
+    flowWrap.appendChild(blocksRow);
 
+    const foot = el('div','bigNote','<b>Summary per layer:</b> 4 matrix multiplications on 4 GPUs, but only <b>2 AllReduce network syncs</b>. Everything else runs at full on-chip speed.');
+    flowWrap.appendChild(foot);
     body.appendChild(flowWrap);
-    body.appendChild(el('div','bigNote','By pairing <b>Column Cut -> Row Cut</b>, activations never leave the GPU between multiplications. Two large math operations require only <b>one sync point</b> over NVLink.'));
 
     (async()=>{
       await sleep(500); if(!alive(id)) return;
-      
-      // Phase 1: Column Math
-      status.textContent = '1. Step 1: All 4 GPUs compute column multiplication in parallel';
+
+      // Phase 1: Attention compute
+      status.textContent = '1. Attention Block: 4 GPUs compute attention heads in local memory';
       status.classList.add('active');
-      gpuCards.forEach(gc=>{
-        gc.c1.style.background = GT[gc.g];
-        gc.c1.style.borderColor = GC[gc.g];
-        gc.c1.style.color = GC[gc.g];
-        gc.c1.classList.add('flash');
-      });
-      await sleep(1400); if(!alive(id)) return;
+      attC1.style.borderColor='var(--accent)'; attC1.style.color='var(--accent)'; attC1.classList.add('flash');
+      await sleep(1100); if(!alive(id)) return;
 
-      // Phase 2: Local Memory Transfer (0 Network)
-      status.textContent = '2. Local Memory: Outputs feed directly into next step (0 network cables used)';
-      gpuCards.forEach(gc=>{
-        gc.conn.style.background = 'var(--okWash)';
-        gc.conn.style.borderColor = 'var(--ok)';
-        gc.conn.style.color = 'var(--ok)';
-        gc.conn.classList.add('flash');
-      });
-      await sleep(1400); if(!alive(id)) return;
+      attConn.style.background='var(--okWash)'; attConn.style.color='var(--ok)'; attConn.style.borderColor='var(--ok)';
+      attC2.style.borderColor='var(--accent)'; attC2.style.color='var(--accent)'; attC2.classList.add('flash');
+      await sleep(1100); if(!alive(id)) return;
 
-      // Phase 3: Row Math
-      status.textContent = '3. Step 2: All 4 GPUs compute row multiplication in parallel';
-      gpuCards.forEach(gc=>{
-        gc.c2.style.background = GT[gc.g];
-        gc.c2.style.borderColor = GC[gc.g];
-        gc.c2.style.color = GC[gc.g];
-        gc.c2.classList.add('flash');
-      });
-      await sleep(1400); if(!alive(id)) return;
+      // Phase 2: Attention Sync
+      status.textContent = '2. Attention Sync: All 4 GPUs perform AllReduce #1 over NVLink';
+      attSync.style.background=INK; attSync.style.color=ONINK; attSync.style.borderColor=INK; attSync.classList.add('flash');
+      await sleep(1300); if(!alive(id)) return;
 
-      // Phase 4: AllReduce Sync
-      status.textContent = '4. Single Sync: GPUs exchange and sum partial answers over NVLink cables';
-      pulse.style.width = '100%';
-      syncTag.style.background = INK;
-      syncTag.style.color = ONINK;
-      syncTag.style.borderColor = INK;
-      syncTag.classList.add('flash');
-      await sleep(1500); if(!alive(id)) return;
+      // Phase 3: MLP compute
+      status.textContent = '3. MLP Block: 4 GPUs expand & compress vectors in local memory';
+      mlpC1.style.borderColor='var(--accent)'; mlpC1.style.color='var(--accent)'; mlpC1.classList.add('flash');
+      await sleep(1100); if(!alive(id)) return;
+
+      mlpConn.style.background='var(--okWash)'; mlpConn.style.color='var(--ok)'; mlpConn.style.borderColor='var(--ok)';
+      mlpC2.style.borderColor='var(--accent)'; mlpC2.style.color='var(--accent)'; mlpC2.classList.add('flash');
+      await sleep(1100); if(!alive(id)) return;
+
+      // Phase 4: MLP Sync
+      status.textContent = '4. MLP Sync: All 4 GPUs perform AllReduce #2 over NVLink';
+      mlpSync.style.background=INK; mlpSync.style.color=ONINK; mlpSync.style.borderColor=INK; mlpSync.classList.add('flash');
+      await sleep(1400); if(!alive(id)) return;
 
       // Complete
-      status.textContent = 'Complete: Two full matrix multiplications done with only ONE sync point';
+      status.textContent = 'Complete: 1 Full Layer done with exactly 2 AllReduce syncs';
       status.classList.remove('active');
     })();
   }
@@ -1201,49 +1188,135 @@ P2.push({
 
 /* ---- 2.9 through the layers ---- */
 P2.push({
-  title:'Prefill drumbeat: 94 layers of parallel compute and sync',
-  text:`<h2>The full forward pass</h2>
-    <p>Layer 1's output (after its AllReduce, identical on all GPUs) is layer 2's input. No weights move: every GPU already holds its slices of layer 2.</p>
-    <p>Prefill becomes a repeating rhythm across all 94 layers:</p>
-    <p><b>[Col-Matmul -> Row-Matmul on 4 GPUs in parallel] -> [One AllReduce Sync] -> Next Layer</b> (94 times).</p>
-    <p>The four bars show GPUs computing simultaneously; the <code>AllReduce</code> tag is the quick sync between layers.</p>`,
+  title:'Prefill drumbeat: Layer 1 output flows directly into Layer 2 input',
+  text:`<h2>The cascading forward pass</h2>
+    <p>Watch the animation: <b>Layer 1's completed output matrix</b> (after its AllReduce) slides down to become <b>Layer 2's input matrix</b>.</p>
+    <p>No weights ever move across the network. Every GPU already holds its thin slices of all 94 layers.</p>
+    <p>The prompt surges through the model in a repeating rhythm: <b>[Layer Math on 4 GPUs] -> [Sync] -> [Slide to Next Layer]</b>, 94 times until the final token is generated.</p>`,
   setup(body, id){
-    const chain = el('div','col');
-    const rows=[];
-    const wrap = el('div'); wrap.style.cssText='display:flex;flex-direction:column;gap:8px;';
-    for(let l=0;l<8;l++){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+
+    const status = el('div','statusBadge','1. Layer 1 computes on 4 GPUs in parallel');
+    wrap.appendChild(status);
+
+    // Layer 1 container
+    const l1Box = el('div','col'); l1Box.style.cssText='width:100%;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    l1Box.appendChild(el('div','caption','<b>Layer 1 on 4 GPUs:</b> input X (3x8) is multiplied across 4 GPU shards'));
+    const l1Cards = el('div','row'); l1Cards.style.gap='8px';
+    const l1GpuBoxes = [];
+    for(let g=0;g<4;g++){
+      const gb = gpuBox(g, el('div','caption',`1/4 of Layer 1`));
+      l1Cards.appendChild(gb);
+      l1GpuBoxes.push(gb);
+    }
+    l1Box.appendChild(l1Cards);
+    const l1OutCol = el('div','col'); l1OutCol.style.alignItems='center'; l1OutCol.style.marginTop='4px';
+    const l1OutMtx = mtx(YM, {small:true});
+    l1OutCol.appendChild(el('div','caption','Layer 1 Output Matrix (3x8: "The", "cat", "sat")'));
+    l1OutCol.appendChild(l1OutMtx);
+    l1Box.appendChild(l1OutCol);
+    wrap.appendChild(l1Box);
+
+    // Animated transfer arrow
+    const flowArrow = el('div','col'); flowArrow.style.alignItems='center'; flowArrow.style.gap='2px';
+    const flowTag = el('div','tag','↓ Output of Layer 1 becomes Input of Layer 2 ↓');
+    flowTag.style.cssText+=';font-size:11px;padding:5px 14px;transition:all .4s;';
+    flowArrow.appendChild(flowTag);
+    wrap.appendChild(flowArrow);
+
+    // Layer 2 container
+    const l2Box = el('div','col'); l2Box.style.cssText='width:100%;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;opacity:0.4;transition:opacity .5s;';
+    l2Box.appendChild(el('div','caption','<b>Layer 2 on 4 GPUs:</b> receives Layer 1 output as its new input'));
+    const l2Cards = el('div','row'); l2Cards.style.gap='8px';
+    const l2GpuBoxes = [];
+    for(let g=0;g<4;g++){
+      const gb = gpuBox(g, el('div','caption',`1/4 of Layer 2`));
+      l2Cards.appendChild(gb);
+      l2GpuBoxes.push(gb);
+    }
+    l2Box.appendChild(l2Cards);
+    const l2OutCol = el('div','col'); l2OutCol.style.alignItems='center'; l2OutCol.style.marginTop='4px';
+    const l2OutMtx = mtx(YM, {small:true});
+    l2OutCol.appendChild(el('div','caption','Layer 2 Output Matrix (3x8)'));
+    l2OutCol.appendChild(l2OutMtx);
+    l2Box.appendChild(l2OutCol);
+    wrap.appendChild(l2Box);
+
+    // 94-layer cascade stack
+    const cascadeCol = el('div','col'); cascadeCol.style.width='100%'; cascadeCol.style.alignItems='center'; cascadeCol.style.marginTop='10px';
+    cascadeCol.appendChild(el('div','caption','<b>Cascading through all 94 layers to generate the first token:</b>'));
+    const chainWrap = el('div'); chainWrap.style.cssText='display:flex;flex-direction:column;gap:5px;width:100%;max-width:440px;';
+    const layerRows = [];
+    for(let l=2;l<8;l++){
       const r = el('div','layerRow');
-      r.appendChild(el('div','caption',`L${l+1}`)).style.minWidth='30px';
+      r.appendChild(el('div','caption',`L${l+1}`)).style.minWidth='28px';
       const gcells=[];
       for(let g=0;g<4;g++){
         const c = el('div','layerCell'); c.style.cssText+=`background:${GT[g]};border:1px solid ${GB[g]};`;
         r.appendChild(c); gcells.push(c);
       }
-      const sync = el('div','tag','AllReduce'); sync.style.transition='all .25s';
+      const sync = el('div','tag','Sync'); sync.style.transition='all .2s';
       r.appendChild(sync);
-      wrap.appendChild(r);
-      rows.push({gcells, sync});
+      chainWrap.appendChild(r);
+      layerRows.push({gcells, sync});
     }
-    wrap.appendChild(el('div','caption','⋮ continues to layer 94 ⋮'));
-    chain.appendChild(wrap);
-    body.appendChild(chain);
-    const out = el('div','col'); out.style.marginTop='14px';
-    const tok = el('div','tokOut','first token -> "Sure"');
-    out.appendChild(tok);
-    body.appendChild(out);
+    chainWrap.appendChild(el('div','caption','⋮ continues through Layer 94 ⋮'));
+    cascadeCol.appendChild(chainWrap);
+
+    const tok = el('div','tokOut','FIRST TOKEN PRODUCED -> "Sure"');
+    tok.style.marginTop='12px';
+    cascadeCol.appendChild(tok);
+    wrap.appendChild(cascadeCol);
+
+    body.appendChild(wrap);
+
     (async()=>{
-      await sleep(400);
-      for(let l=0;l<8;l++){
+      await sleep(500); if(!alive(id)) return;
+
+      // Phase 1: Layer 1 computes
+      status.textContent = '1. Layer 1: 4 GPUs calculate in parallel -> AllReduce produces Layer 1 output (3x8)';
+      status.classList.add('active');
+      l1GpuBoxes.forEach(b=>b.classList.add('active'));
+      await sleep(1000); if(!alive(id)) return;
+
+      l1OutMtx.querySelectorAll('.cell').forEach(cell=>{
+        paintInk(cell); cell.classList.add('flash');
+      });
+      l1GpuBoxes.forEach(b=>b.classList.remove('active'));
+      await sleep(1200); if(!alive(id)) return;
+
+      // Phase 2: Flow from Layer 1 to Layer 2
+      status.textContent = '2. Layer 1 Output flows directly into Layer 2 as its input (no weights move)';
+      flowTag.style.background=INK; flowTag.style.color=ONINK; flowTag.style.borderColor=INK; flowTag.classList.add('flash');
+      l2Box.style.opacity='1';
+      await sleep(1300); if(!alive(id)) return;
+
+      // Phase 3: Layer 2 computes
+      status.textContent = '3. Layer 2: 4 GPUs calculate in parallel -> AllReduce produces Layer 2 output (3x8)';
+      l2GpuBoxes.forEach(b=>b.classList.add('active'));
+      await sleep(1000); if(!alive(id)) return;
+
+      l2OutMtx.querySelectorAll('.cell').forEach(cell=>{
+        paintInk(cell); cell.classList.add('flash');
+      });
+      l2GpuBoxes.forEach(b=>b.classList.remove('active'));
+      await sleep(1200); if(!alive(id)) return;
+
+      // Phase 4: Fast cascade through all 94 layers
+      status.textContent = '4. Rhythm repeats across all 94 layers -> First token generated!';
+      for(let l=0;l<layerRows.length;l++){
         if(!alive(id)) return;
-        rows[l].gcells.forEach((c,g)=>{ c.style.boxShadow=`3px 3px 0 -1px ${GC[g]}`; c.style.borderColor=GC[g]; });
-        await sleep(420); if(!alive(id)) return;
-        rows[l].gcells.forEach(c=>{ c.style.boxShadow='none'; });
-        rows[l].sync.style.background=INK; rows[l].sync.style.color=ONINK; rows[l].sync.style.borderColor=INK;
-        await sleep(200); if(!alive(id)) return;
-        rows[l].sync.style.background=''; rows[l].sync.style.color=''; rows[l].sync.style.borderColor='';
+        layerRows[l].gcells.forEach((c,g)=>{ c.style.boxShadow=`3px 3px 0 -1px ${GC[g]}`; c.style.borderColor=GC[g]; });
+        await sleep(220); if(!alive(id)) return;
+        layerRows[l].gcells.forEach(c=>{ c.style.boxShadow='none'; });
+        layerRows[l].sync.style.background=INK; layerRows[l].sync.style.color=ONINK; layerRows[l].sync.style.borderColor=INK;
+        await sleep(150); if(!alive(id)) return;
+        layerRows[l].sync.style.background=''; layerRows[l].sync.style.color=''; layerRows[l].sync.style.borderColor='';
       }
       if(!alive(id)) return;
       tok.style.opacity='1';
+      status.textContent = 'Complete: Prompt passed through 94 layers on 4 GPUs -> Token generated!';
+      status.classList.remove('active');
     })();
   }
 });
