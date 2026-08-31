@@ -2110,100 +2110,164 @@ const P3 = [];
 P3.push({
   title:'The Autoregressive Loop: How LLMs generate text token-by-token',
   text:`<h2>Generating one token at a time: The Autoregressive Loop</h2>
-    <p>In Prefill, the model processed the prompt <code>X = ["The", "cat", "sat"]</code> and generated the first new token: <code>"on"</code>.</p>
-    <p>To produce subsequent words, LLMs cannot generate entire sentences in one step. They are <b>autoregressive</b>: they must predict text <b>one token at a time</b>.</p>
-    <p>After each word is emitted, it is appended to the sequence so far, and the entire updated sequence is fed back into all 94 layers to predict the next word.</p>
-    <div class="key"><b>The Growing Input Problem:</b> Watch the continuous loop below. Because each newly generated word is added to the sequence, the input matrix entering the 94 layers grows <b>one row taller on every single cycle</b>!</div>`,
+    <p>In Prefill, the model processed the prompt <code>X = ["The", "cat", "sat"]</code> (3x8 matrix) and generated the first new token: <code>"on"</code>.</p>
+    <p>Because LLMs are <b>autoregressive</b>, they can only produce one token at a time. The newly emitted token is appended to the input matrix, making the total output a <b>4x8 matrix</b>.</p>
+    <p>This 4x8 matrix loops back as the input to all 94 layers to produce the next token (<code>"the"</code>), creating a <b>5x8 matrix</b>, which loops again to produce <code>"mat"</code> (6x8 matrix).</p>
+    <div class="key"><b>The Growing Matrix Consequence:</b> Watch the continuous loop flow below. Follow the wire from right to left: on every single pass, the matrix entering the 94 layers is <b>1 row taller than the last pass</b>!</div>`,
   setup(body, id){
-    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','Autoregressive Loop: Generating tokens one-by-one...');
+    const wrap = el('div','col'); wrap.style.gap='14px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','Autoregressive Loop: Tracing data flow across passes...');
     wrap.appendChild(status);
 
-    // Sequence stream
-    const seqCol = el('div','col');
-    seqCol.appendChild(el('div','caption','<b>Full Sequence fed into 94 layers (growing 1 word taller each cycle):</b>'));
-    const stream = el('div','tokenStream');
-    seqCol.appendChild(stream);
-    wrap.appendChild(seqCol);
+    const canvas = el('div','col'); canvas.style.gap='0px'; canvas.style.width='100%';
 
-    // Visual loop
-    const loopRow = el('div','row'); loopRow.style.gap='16px'; loopRow.style.alignItems='center';
-    
-    const inBox = el('div','col'); inBox.style.alignItems='center';
-    inBox.appendChild(el('div','caption','Input Matrix to 94 Layers:'));
-    const inHolder = el('div');
-    inBox.appendChild(inHolder);
-    const sizeTag = el('div','caption','Matrix shape: <b>3 × 4096</b>');
-    inBox.appendChild(sizeTag);
-    loopRow.appendChild(inBox);
+    function makePassRow(passNum, inRows, inToks, outRows, outToks, newTok){
+      const row = el('div','row'); row.style.cssText='width:100%;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--line2);border-radius:2px;background:var(--panel);opacity:0.25;transition:all .4s;';
+      
+      // Input Matrix
+      const inBox = el('div','col'); inBox.style.alignItems='center'; inBox.style.gap='2px';
+      inBox.appendChild(el('div','caption',`<b>Pass ${passNum} Input (${inRows}x8)</b>`));
+      const inM = mtx(Array.from({length:inRows},()=>Array(8).fill('')), {small:true});
+      inM.querySelectorAll('.cell').forEach(paintInk);
+      inBox.appendChild(inM);
+      const inLabels = el('div','caption', inToks.join(' '));
+      inLabels.style.fontSize='10px'; inLabels.style.opacity='0.8';
+      inBox.appendChild(inLabels);
+      row.appendChild(inBox);
 
-    loopRow.appendChild(el('div','eq','→'));
+      // 94 Layers Block
+      const midCol = el('div','col'); midCol.style.alignItems='center'; midCol.style.gap='4px';
+      const arrow1 = el('div','eq','→');
+      const layerBadge = el('div','nvlinkMeshBadge','94 Layers');
+      layerBadge.style.padding='8px 14px'; layerBadge.style.fontSize='11px';
+      const emitBadge = el('div','tokOut',`Emits: "${newTok}"`);
+      emitBadge.style.fontSize='10px'; emitBadge.style.padding='2px 8px'; emitBadge.style.opacity='0';
+      midCol.appendChild(arrow1);
+      midCol.appendChild(layerBadge);
+      midCol.appendChild(emitBadge);
+      row.appendChild(midCol);
 
-    const lBox = el('div','col'); lBox.style.alignItems='center';
-    lBox.appendChild(el('div','caption','94 Transformer Layers:'));
-    const lCard = el('div','nvlinkMeshBadge','94 Layers (Attention + MLP)');
-    lCard.style.padding='14px 20px';
-    lBox.appendChild(lCard);
-    loopRow.appendChild(lBox);
+      // Output Matrix (Updated Sequence)
+      const outBox = el('div','col'); outBox.style.alignItems='center'; outBox.style.gap='2px';
+      outBox.appendChild(el('div','caption',`<b>Output (${outRows}x8)</b>`));
+      const outM = mtx(Array.from({length:outRows},()=>Array(8).fill('')), {small:true});
+      const cells = outM.querySelectorAll('.cell');
+      cells.forEach((c, idx)=>{
+        const r = Math.floor(idx / 8);
+        if(r === outRows - 1){
+          c.style.borderColor='var(--accent)'; c.style.color='var(--accent)';
+        } else {
+          paintInk(c);
+        }
+      });
+      outBox.appendChild(outM);
+      const outLabels = el('div','caption', `${outToks.slice(0,-1).join(' ')} <b style="color:var(--accent);">+ "${newTok}"</b>`);
+      outLabels.style.fontSize='10px';
+      outBox.appendChild(outLabels);
+      row.appendChild(outBox);
 
-    loopRow.appendChild(el('div','eq','→'));
+      return {row, inBox, layerBadge, emitBadge, outBox, inM, outM};
+    }
 
-    const outBox = el('div','col'); outBox.style.alignItems='center';
-    outBox.appendChild(el('div','caption','Next Token Emitted:'));
-    const outPill = el('div','tokOut','');
-    outBox.appendChild(outPill);
-    loopRow.appendChild(outBox);
+    function makeWire(){
+      const wireWrap = el('div'); wireWrap.style.cssText='width:100%;height:32px;position:relative;margin:2px 0;opacity:0.25;transition:opacity .4s;';
+      wireWrap.innerHTML = `
+        <svg viewBox="0 0 100 32" preserveAspectRatio="none" style="width:100%;height:100%;display:block;overflow:visible;">
+          <path class="wirePath" d="M 85,2 L 85,16 L 15,16 L 15,30 L 22,30" fill="none" stroke="var(--ink)" stroke-width="1.8" stroke-dasharray="3,2" />
+          <polygon points="24,30 20,27 20,33" fill="var(--ink)" />
+        </svg>
+      `;
+      return wireWrap;
+    }
 
-    wrap.appendChild(loopRow);
+    // Pass 1: 3x8 -> 94 layers -> 4x8
+    const p1 = makePassRow(1, 3, ['"The"','"cat"','"sat"'], 4, ['"The"','"cat"','"sat"','"on"'], 'on');
+    canvas.appendChild(p1.row);
 
-    const feedbackMsg = el('div','tag','⤹ Output token is appended to sequence -> Fed back into 94 layers as a taller matrix ⤹');
-    feedbackMsg.style.cssText += ';font-size:11px;padding:6px 14px;border-color:var(--accent);color:var(--accent);background:var(--warnWash);margin:0 auto;';
-    wrap.appendChild(feedbackMsg);
+    // Wire 1: down -> left -> down -> right
+    const w1 = makeWire();
+    canvas.appendChild(w1);
+
+    // Pass 2: 4x8 -> 94 layers -> 5x8
+    const p2 = makePassRow(2, 4, ['"The"','"cat"','"sat"','"on"'], 5, ['"The"','"cat"','"sat"','"on"','"the"'], 'the');
+    canvas.appendChild(p2.row);
+
+    // Wire 2: down -> left -> down -> right
+    const w2 = makeWire();
+    canvas.appendChild(w2);
+
+    // Pass 3: 5x8 -> 94 layers -> 6x8
+    const p3 = makePassRow(3, 5, ['"The"','"cat"','"sat"','"on"','"the"'], 6, ['"The"','"cat"','"sat"','"on"','"the"','"mat"'], 'mat');
+    canvas.appendChild(p3.row);
+
+    wrap.appendChild(canvas);
 
     const check = el('div','caption','');
-    check.style.marginTop='4px';
+    check.style.marginTop='6px';
     wrap.appendChild(check);
 
     body.appendChild(wrap);
 
-    const stepsData = [
-      {toks:['The','cat','sat'], emit:'on', rows:3},
-      {toks:['The','cat','sat','on'], emit:'the', rows:4},
-      {toks:['The','cat','sat','on','the'], emit:'mat', rows:5},
-      {toks:['The','cat','sat','on','the','mat'], emit:'.', rows:6}
-    ];
-
-    let curStep = 0;
+    // Continuous sequential waterfall animation
     (async()=>{
       while(alive(id)){
-        const d = stepsData[curStep];
-        status.textContent = `Loop Cycle ${curStep+1}/4: Input sequence is ${d.rows} tokens -> Emits "${d.emit}" -> Appends to input matrix`;
-        status.classList.toggle('active', curStep>0);
+        // Reset all
+        [p1, p2, p3].forEach(p=>{
+          p.row.style.opacity='0.25'; p.row.style.borderColor='var(--line2)';
+          p.layerBadge.classList.remove('flash');
+          p.emitBadge.style.opacity='0';
+        });
+        w1.style.opacity='0.25'; w2.style.opacity='0.25';
+        check.innerHTML = '';
+        await sleep(300); if(!alive(id)) return;
 
-        stream.innerHTML = '';
-        d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
+        // Step 1: Pass 1 executes (3x8 -> emits "on" -> 4x8)
+        status.textContent = 'Pass 1: Input is 3x8 matrix ("The","cat","sat") -> 94 Layers -> Emits "on" -> Output is 4x8 matrix';
+        status.classList.remove('active');
+        p1.row.style.opacity='1'; p1.row.style.borderColor='var(--accent)';
+        p1.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+        await sleep(600); if(!alive(id)) return;
+        p1.layerBadge.classList.add('flash');
+        await sleep(600); if(!alive(id)) return;
+        p1.emitBadge.style.opacity='1'; p1.emitBadge.classList.add('flash');
+        p1.outM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+        await sleep(1000); if(!alive(id)) return;
 
-        inHolder.innerHTML = '';
-        inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
-        inHolder.querySelectorAll('.cell').forEach(paintInk);
-        sizeTag.innerHTML = `Matrix shape: <b>${d.rows} × 4096</b> (${d.rows} rows)`;
+        // Step 2: Wire 1 carries 4x8 matrix (down -> left -> down -> right)
+        status.textContent = 'Wire Loop 1: 4x8 matrix flows down -> left -> down -> right into Pass 2 input';
+        status.classList.add('active');
+        w1.style.opacity='1';
+        await sleep(900); if(!alive(id)) return;
 
-        lCard.classList.add('flash');
-        outPill.textContent = `"${d.emit}"`;
-        outPill.style.opacity = '1';
-        outPill.classList.add('flash');
+        // Step 3: Pass 2 executes (4x8 -> emits "the" -> 5x8)
+        status.textContent = 'Pass 2: Input is now 4x8 matrix -> 94 Layers -> Emits "the" -> Output is 5x8 matrix';
+        p2.row.style.opacity='1'; p2.row.style.borderColor='var(--accent)';
+        p2.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+        await sleep(600); if(!alive(id)) return;
+        p2.layerBadge.classList.add('flash');
+        await sleep(600); if(!alive(id)) return;
+        p2.emitBadge.style.opacity='1'; p2.emitBadge.classList.add('flash');
+        p2.outM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+        await sleep(1000); if(!alive(id)) return;
 
-        if(curStep === stepsData.length - 1){
-          check.innerHTML = `Full sentence generated! Notice how the input matrix grew from 3 rows to 6 rows <span class="okmark">✓</span>`;
-          await sleep(2400);
-          if(!alive(id)) return;
-          curStep = 0;
-        } else {
-          check.innerHTML = `Output "${d.emit}" feeds back into the layers as row ${d.rows+1}...`;
-          await sleep(1800);
-          if(!alive(id)) return;
-          curStep++;
-        }
+        // Step 4: Wire 2 carries 5x8 matrix (down -> left -> down -> right)
+        status.textContent = 'Wire Loop 2: 5x8 matrix flows down -> left -> down -> right into Pass 3 input';
+        w2.style.opacity='1';
+        await sleep(900); if(!alive(id)) return;
+
+        // Step 5: Pass 3 executes (5x8 -> emits "mat" -> 6x8)
+        status.textContent = 'Pass 3: Input is now 5x8 matrix -> 94 Layers -> Emits "mat" -> Output is 6x8 matrix';
+        p3.row.style.opacity='1'; p3.row.style.borderColor='var(--accent)';
+        p3.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+        await sleep(600); if(!alive(id)) return;
+        p3.layerBadge.classList.add('flash');
+        await sleep(600); if(!alive(id)) return;
+        p3.emitBadge.style.opacity='1'; p3.emitBadge.classList.add('flash');
+        p3.outM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+
+        check.innerHTML = `Notice the input matrix growing on every pass: <b>3x8 -> 4x8 -> 5x8</b>! Every new word takes more math than the last <span class="okmark">✓</span>`;
+        status.classList.remove('active');
+        await sleep(3200);
       }
     })();
   }
