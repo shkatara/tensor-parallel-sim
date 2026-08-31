@@ -2106,55 +2106,57 @@ P2.push({
 /* ================= PART 3: DECODE & KV CACHE ================= */
 const P3 = [];
 
-/* ---- 3.1 The Recomputation Disaster (Without KV Cache) ---- */
+/* ---- 3.1 The Autoregressive Loop ---- */
 P3.push({
-  title:'The Recomputation Disaster: What happens without a memory',
-  text:`<h2>The Detective with Amnesia: What happens without KV Cache?</h2>
-    <p>Imagine generating a 4-word sentence token-by-token: <code>"on" -> "the" -> "mat" -> "."</code>.</p>
-    <p>If the GPU has <b>no memory (no KV Cache)</b>, it has amnesia! To generate each new word, it must re-feed <b>all past tokens from scratch</b> through all 94 layers of W weight matrices:</p>
-    <p>• <b>Step 1 (Emit "on"):</b> Re-multiplies 3 tokens ("The","cat","sat") -> <b>24 MACs</b><br>
-       • <b>Step 2 (Emit "the"):</b> Re-multiplies 4 tokens ("The","cat","sat","on") -> <b>32 MACs</b><br>
-       • <b>Step 3 (Emit "mat"):</b> Re-multiplies 5 tokens ("The","cat","sat","on","the") -> <b>40 MACs</b><br>
-       • <b>Step 4 (Emit "."):</b> Re-multiplies 6 tokens ("The","cat","sat","on","the","mat") -> <b>48 MACs</b></p>
-    <div class="key"><b>Total compute wasted:</b> 24 + 32 + 40 + 48 = <b>144 MACs</b>! For 1,000 tokens, this balloons to <b>over 500,000 redundant operations</b> (O(N²) quadratic disaster). 99.9% of GPU compute is wasted re-calculating the exact same past words.</div>`,
+  title:'The Autoregressive Loop: How LLMs generate text token-by-token',
+  text:`<h2>One token at a time: The Autoregressive Loop</h2>
+    <p>In Prefill, the model processed the full prompt input <code>X = ["The", "cat", "sat"]</code> (3 tokens) and produced the <b>first generated token: "on"</b>.</p>
+    <p>How does the model produce subsequent words? LLMs are <b>autoregressive</b>: they can predict only <b>one token at a time</b>!</p>
+    <p>To generate each new word, the model takes the entire sequence generated so far and feeds it back into all 94 layers:</p>
+    <p>• <b>Iteration 1 (Emit "on"):</b> Input is [X] (3 tokens: "The","cat","sat") -> emits "on"<br>
+       • <b>Iteration 2 (Emit "the"):</b> Input is [X + "on"] (4 tokens) -> emits "the"<br>
+       • <b>Iteration 3 (Emit "mat"):</b> Input is [X + "on" + "the"] (5 tokens) -> emits "mat"<br>
+       • <b>Iteration 4 (Emit "."):</b> Input is [X + "on" + "the" + "mat"] (6 tokens) -> emits "."</p>
+    <div class="key"><b>The Growing Input Matrix:</b> Notice what happens on each loop. Because the model re-feeds all past tokens, the input matrix fed into the 94 layers becomes <b>1 row taller on every single iteration</b>!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. Step 1: Prompt has 3 tokens -> Multiplies 3x8 input by W -> 24 MACs');
+    const status = el('div','statusBadge','1. Iteration 1: Prompt [X] (3 tokens: "The","cat","sat") enters 94 layers -> emits "on"');
     wrap.appendChild(status);
 
-    // Current sequence stream
+    // Sequence stream
     const seqCol = el('div','col');
-    seqCol.appendChild(el('div','caption','<b>Sequence fed into 94 layers on each step (growing larger!):</b>'));
+    seqCol.appendChild(el('div','caption','<b>Full Sequence fed into 94 layers (growing 1 word taller each iteration):</b>'));
     const stream = el('div','tokenStream');
     seqCol.appendChild(stream);
     wrap.appendChild(seqCol);
 
-    // Dynamic multiplying stack
-    const stackRow = el('div','row'); stackRow.style.gap='16px'; stackRow.style.alignItems='center';
+    // Visual loop
+    const loopRow = el('div','row'); loopRow.style.gap='16px'; loopRow.style.alignItems='center';
     
     const inBox = el('div','col'); inBox.style.alignItems='center';
-    inBox.appendChild(el('div','caption','Input Matrix fed to 94 layers:'));
+    inBox.appendChild(el('div','caption','Input Matrix to 94 Layers:'));
     const inHolder = el('div');
     inBox.appendChild(inHolder);
-    stackRow.appendChild(inBox);
+    loopRow.appendChild(inBox);
 
-    stackRow.appendChild(el('div','eq','×'));
+    loopRow.appendChild(el('div','eq','→'));
 
-    const wBox = el('div','col'); wBox.style.alignItems='center';
-    wBox.appendChild(el('div','caption','Weight W (8x8):'));
-    const wM = mtx(W, {small:true});
-    wBox.appendChild(wM);
-    stackRow.appendChild(wBox);
+    const lBox = el('div','col'); lBox.style.alignItems='center';
+    lBox.appendChild(el('div','caption','94 Transformer Layers:'));
+    const lCard = el('div','nvlinkMeshBadge','94 Layers (Attention + MLP)');
+    lCard.style.padding='14px 20px';
+    lBox.appendChild(lCard);
+    loopRow.appendChild(lBox);
 
-    wrap.appendChild(stackRow);
+    loopRow.appendChild(el('div','eq','→'));
 
-    // Counters & Pain Banner
-    const banner = el('div','tag','🔴 QUADRATIC EXPLOSION: Every new word forces all previous words to be re-multiplied through all layers');
-    banner.style.cssText += ';font-size:11px;padding:6px 14px;border-color:var(--accent);color:var(--accent);background:var(--warnWash);';
-    wrap.appendChild(banner);
+    const outBox = el('div','col'); outBox.style.alignItems='center';
+    outBox.appendChild(el('div','caption','Next Token Emitted:'));
+    const outPill = el('div','tokOut','');
+    outBox.appendChild(outPill);
+    loopRow.appendChild(outBox);
 
-    const painTracker = el('div','counter','Step Math: <b>24</b> MACs · Cumulative Wasted Math: <b>24</b> MACs');
-    wrap.appendChild(painTracker);
+    wrap.appendChild(loopRow);
 
     const check = el('div','caption','');
     check.style.marginTop='4px';
@@ -2163,10 +2165,10 @@ P3.push({
     body.appendChild(wrap);
 
     const stepsData = [
-      {toks:['The','cat','sat'], newTok:'on', rows:3, stepMac:24, totalMac:24},
-      {toks:['The','cat','sat','on'], newTok:'the', rows:4, stepMac:32, totalMac:56},
-      {toks:['The','cat','sat','on','the'], newTok:'mat', rows:5, stepMac:40, totalMac:96},
-      {toks:['The','cat','sat','on','the','mat'], newTok:'.', rows:6, stepMac:48, totalMac:144}
+      {toks:['The','cat','sat'], emit:'on', rows:3},
+      {toks:['The','cat','sat','on'], emit:'the', rows:4},
+      {toks:['The','cat','sat','on','the'], emit:'mat', rows:5},
+      {toks:['The','cat','sat','on','the','mat'], emit:'.', rows:6}
     ];
 
     createStepper({
@@ -2174,63 +2176,64 @@ P3.push({
       id,
       phases: [
         {
-          name: 'Step 1: Emit "on"',
+          name: 'Iteration 1: Emit "on"',
           delay: 1500,
           run: async () => {
             const d = stepsData[0];
-            status.textContent = `Step 1: Re-feeds ${d.rows} tokens ("The","cat","sat") through all 94 layers -> 24 MACs`;
+            status.textContent = `Iteration 1: Input is [X] (${d.rows} tokens) -> 94 layers compute -> Emits 1st token "${d.emit}"`;
             status.classList.remove('active');
             stream.innerHTML = '';
             d.toks.forEach(t=>stream.appendChild(el('div','tokenPill prompt', t)));
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
-            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs`;
+            outPill.textContent = `"${d.emit}"`;
+            outPill.style.opacity='1';
             check.innerHTML = '';
           }
         },
         {
-          name: 'Step 2: Emit "the"',
+          name: 'Iteration 2: Emit "the"',
           delay: 1500,
           run: async () => {
             const d = stepsData[1];
-            status.textContent = `Step 2: Re-feeds ${d.rows} tokens ("The","cat","sat","on") through all 94 layers -> 32 MACs`;
+            status.textContent = `Iteration 2: Input is now [X + "on"] (${d.rows} tokens) -> 94 layers compute -> Emits 2nd token "${d.emit}"`;
             status.classList.add('active');
             stream.innerHTML = '';
             d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
-            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs`;
+            outPill.textContent = `"${d.emit}"`;
           }
         },
         {
-          name: 'Step 3: Emit "mat"',
+          name: 'Iteration 3: Emit "mat"',
           delay: 1500,
           run: async () => {
             const d = stepsData[2];
-            status.textContent = `Step 3: Re-feeds ${d.rows} tokens through all 94 layers -> 40 MACs (matrix grows taller!)`;
+            status.textContent = `Iteration 3: Input is now [X + "on" + "the"] (${d.rows} tokens) -> Matrix is 5 rows tall! -> Emits "${d.emit}"`;
             stream.innerHTML = '';
             d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
-            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs`;
+            outPill.textContent = `"${d.emit}"`;
           }
         },
         {
-          name: 'Step 4: Emit "."',
+          name: 'Iteration 4: Emit "."',
           delay: 1500,
           run: async () => {
             const d = stepsData[3];
-            status.textContent = `Step 4: Re-feeds ${d.rows} tokens -> 48 MACs. Cumulative wasted math explodes to 144 MACs!`;
+            status.textContent = `Iteration 4: Input is now 6 tokens tall -> Emits "${d.emit}". Sequence complete!`;
             stream.innerHTML = '';
             d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
-            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs (O(N²) Disaster)`;
-            check.innerHTML = `Notice the explosion: 144 MACs wasted just to generate 4 words! On 1,000 words, this takes minutes <span class="okmark">⚠️</span>`;
+            outPill.textContent = `"${d.emit}"`;
+            check.innerHTML = `This loop produces 1 token per iteration, but the input matrix gets 1 row taller each time <span class="okmark">✓</span>`;
             status.classList.remove('active');
           }
         }
@@ -2239,28 +2242,259 @@ P3.push({
   }
 });
 
-/* ---- 3.2 The Solution: The Detective's Pocket Notebook (KV Cache) ---- */
+/* ---- 3.2 The Growing Matrix Bottleneck (The Pain) ---- */
 P3.push({
-  title:'The Solution: The Detective\'s Pocket Notebook (The KV Cache)',
-  text:`<h2>Why re-read the past when you can take notes?</h2>
-    <p>The detective realizes: <i>"Past words never change! Their Key and Value vectors will always be identical."</i></p>
-    <p>During Prefill, when prompt tokens pass through W_K and W_V, the detective writes summary notes into a <b>Pocket Notebook (the KV Cache in RAM)</b>:</p>
-    <p>• <b>Key (K):</b> What is each word about? (Topic tag)<br>
-       • <b>Value (V):</b> What information does each word hold? (Clue content)</p>
-    <p><b>Now watch the generation loop run with the KV Cache:</b></p>
-    <p>• <b>Step 1 (Emit "on"):</b> Only 1 vector ("sat", 1x8) -> <b>8 MACs</b> (reads 3 cached notes)<br>
-       • <b>Step 2 (Emit "the"):</b> Only 1 vector ("on", 1x8) -> <b>8 MACs</b> (reads 4 cached notes)<br>
-       • <b>Step 3 (Emit "mat"):</b> Only 1 vector ("the", 1x8) -> <b>8 MACs</b> (reads 5 cached notes)<br>
-       • <b>Step 4 (Emit "."):</b> Only 1 vector ("mat", 1x8) -> <b>8 MACs</b> (reads 6 cached notes)</p>
-    <div class="key"><b>Total compute needed:</b> 8 + 8 + 8 + 8 = <b>32 MACs</b> (a <b>4.5x compute reduction</b> on just 4 words, and over <b>1,000x</b> on long text)! Compute cost stays flat at a <b>constant 1 token per step</b>.</div>`,
+  title:'The Growing Matrix Bottleneck: Why generation gets slower on every word',
+  text:`<h2>The Problem: Re-calculating the past on every single word</h2>
+    <p>Because the input matrix grows by 1 row on every iteration of the autoregressive loop, the <b>compute and time required per step increases continuously</b>:</p>
+    <p>• <b>Step 1 (Emit "on"):</b> Re-multiplies 3 tokens through 94 layers -> <b>24 MACs</b> (10 ms)<br>
+       • <b>Step 2 (Emit "the"):</b> Re-multiplies 4 tokens through 94 layers -> <b>32 MACs</b> (13 ms)<br>
+       • <b>Step 3 (Emit "mat"):</b> Re-multiplies 5 tokens through 94 layers -> <b>40 MACs</b> (17 ms)<br>
+       • <b>Step 4 (Emit "."):</b> Re-multiplies 6 tokens through 94 layers -> <b>48 MACs</b> (20 ms)</p>
+    <p><b>By Token 100:</b> The GPU must re-multiply 103 tokens through 94 layers (<b>824 MACs per token!</b>).</p>
+    <div class="key"><b>Quadratic O(N²) Explosion:</b> Generating a 1,000-token answer naively requires <b>503,500 token matmuls</b>! 99.9% of GPU compute is wasted re-calculating past tokens whose values never change.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. KV Cache Ready: Past 3 tokens cached in RAM. Only 1 vector enters layer!');
+    const status = el('div','statusBadge','1. Step 1: Input has 3 tokens -> Compute: 24 MACs (10 ms latency)');
     wrap.appendChild(status);
 
     const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
 
-    // Notebook (KV Cache in RAM)
+    // Multiplying stack
+    const stackBox = el('div','col'); stackBox.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    stackBox.appendChild(el('div','caption','<b>Growing Input Matrix (Re-computed through 94 layers):</b>'));
+    const inHolder = el('div'); inHolder.style.margin='auto 0';
+    stackBox.appendChild(inHolder);
+    compRow.appendChild(stackBox);
+
+    // Latency & Cost Tracker Box
+    const meterBox = el('div','col'); meterBox.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    meterBox.appendChild(el('div','caption','<b>Time & Compute Cost per Token:</b>'));
+    
+    const timeBar = el('div','membar'); timeBar.style.width='100%';
+    const timeFill = el('div'); timeBar.appendChild(timeFill);
+    meterBox.appendChild(timeBar);
+
+    const curCost = el('div','caption','Step Math: <b>24</b> MACs · Step Latency: <b>10 ms</b>');
+    meterBox.appendChild(curCost);
+
+    const totalCost = el('div','counter','Cumulative Wasted Math: <b>24</b> MACs');
+    meterBox.appendChild(totalCost);
+
+    const warnTag = el('div','tag','🔴 BOTTLENECK: Each new token takes longer than the previous one!');
+    warnTag.style.cssText+=';font-size:10px;padding:4px 8px;border-color:var(--accent);color:var(--accent);background:var(--warnWash);';
+    meterBox.appendChild(warnTag);
+
+    compRow.appendChild(meterBox);
+    wrap.appendChild(compRow);
+
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    wrap.appendChild(check);
+
+    body.appendChild(wrap);
+
+    const stepsData = [
+      {rows:3, macs:24, cumMacs:24, ms:10, pct:'20%'},
+      {rows:4, macs:32, cumMacs:56, ms:13, pct:'35%'},
+      {rows:5, macs:40, cumMacs:96, ms:17, pct:'55%'},
+      {rows:6, macs:48, cumMacs:144, ms:20, pct:'80%'}
+    ];
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Step 1: 3 Tokens',
+          delay: 1400,
+          run: async () => {
+            const d = stepsData[0];
+            status.textContent = `Step 1: 3 tokens in input matrix -> 24 MACs (${d.ms} ms)`;
+            status.classList.remove('active');
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            timeFill.style.width = d.pct;
+            timeFill.style.background = 'var(--accent)';
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs`;
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: 'Step 2: 4 Tokens',
+          delay: 1400,
+          run: async () => {
+            const d = stepsData[1];
+            status.textContent = `Step 2: 4 tokens in input matrix -> 32 MACs (${d.ms} ms) -> Time per token increases!`;
+            status.classList.add('active');
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            timeFill.style.width = d.pct;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs`;
+          }
+        },
+        {
+          name: 'Step 3: 5 Tokens',
+          delay: 1400,
+          run: async () => {
+            const d = stepsData[2];
+            status.textContent = `Step 3: 5 tokens in input matrix -> 40 MACs (${d.ms} ms) -> Input matrix is visibly taller`;
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            timeFill.style.width = d.pct;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs`;
+          }
+        },
+        {
+          name: 'Step 4: 6 Tokens',
+          delay: 1400,
+          run: async () => {
+            const d = stepsData[3];
+            status.textContent = `Step 4: 6 tokens -> 48 MACs (${d.ms} ms). Total wasted math exploded to 144 MACs!`;
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            timeFill.style.width = d.pct;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs (O(N²) quadratic bottleneck)`;
+            check.innerHTML = `Without memory, generation grinds to a crawl as sequence length grows <span class="okmark">⚠️</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.3 Taking Notes in Prefill (Generating KV Cache) ---- */
+P3.push({
+  title:'Taking Notes in Prefill: Generating the Key-Value (KV) Cache',
+  text:`<h2>The Insight: Past words never change!</h2>
+    <p>Why re-multiply all past tokens through 94 layers on every iteration?</p>
+    <p>During <b>Prefill</b>, when prompt tokens <code>["The", "cat", "sat"]</code> pass through W_K and W_V, the model already calculated their Key and Value vectors!</p>
+    <p>Instead of discarding them, the GPU saves them into a <b>Key-Value Cache (the pocket notebook in VRAM)</b>:</p>
+    <p>• <b>Key (K):</b> What is each word about? (Topic tag, saved in VRAM)<br>
+       • <b>Value (V):</b> What clue or information does each word hold? (Saved in VRAM)</p>
+    <div class="key"><b>Zero Recomputation:</b> Because prompt tokens never change, their Key and Value vectors will always remain identical. We compute them <b>once during Prefill</b> and store them forever in memory!</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. Prefill Phase: Prompt tokens ["The", "cat", "sat"] enter Layer 1');
+    wrap.appendChild(status);
+
+    const flowRow = el('div','row'); flowRow.style.gap='14px'; flowRow.style.alignItems='center';
+
+    // Prompt tokens
+    const pBox = el('div','col'); pBox.style.alignItems='center';
+    pBox.appendChild(el('div','caption','Prompt Input X (3x8):'));
+    const pM = mtx(Array.from({length:3},()=>Array(8).fill('')), {small:true});
+    pM.querySelectorAll('.cell').forEach(paintInk);
+    pBox.appendChild(pM);
+    flowRow.appendChild(pBox);
+
+    flowRow.appendChild(el('div','eq','×'));
+
+    // W_K and W_V matrices
+    const wBox = el('div','col'); wBox.style.alignItems='center';
+    wBox.appendChild(el('div','caption','W_K & W_V Weights:'));
+    const wChip = el('div','nvlinkMeshBadge','W_K & W_V (Column Cut)');
+    wChip.style.padding='10px 16px';
+    wBox.appendChild(wChip);
+    flowRow.appendChild(wBox);
+
+    flowRow.appendChild(el('div','eq','→'));
+
+    // KV Cache Notebook in RAM
+    const nbBox = el('div','col'); nbBox.style.cssText='border:1px solid var(--line2);border-radius:2px;padding:10px;background:var(--panel);gap:6px;align-items:center;';
+    nbBox.appendChild(el('div','caption','<b>KV Cache in RAM (Pocket Notebook)</b>'));
+    const nbTable = el('div','kvTable');
+    const nbHolder = el('div');
+    nbTable.appendChild(nbHolder);
+    nbBox.appendChild(nbTable);
+    const nbLabel = el('div','caption','0 tokens cached');
+    nbBox.appendChild(nbLabel);
+    flowRow.appendChild(nbBox);
+
+    wrap.appendChild(flowRow);
+
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    wrap.appendChild(check);
+
+    const note = el('div','bigNote','By caching K and V in VRAM during Prefill, past words are ready to be referenced instantly in Decode!');
+    wrap.appendChild(note);
+
+    body.appendChild(wrap);
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: '1. Prefill Input',
+          delay: 1300,
+          run: async () => {
+            status.textContent = '1. Prefill: Prompt tokens ["The", "cat", "sat"] pass through W_K and W_V';
+            status.classList.remove('active');
+            pM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            nbBox.style.borderColor='var(--line2)';
+            nbHolder.innerHTML = '';
+            nbLabel.textContent = '0 tokens cached';
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: '2. Generate Keys & Values',
+          delay: 1400,
+          run: async () => {
+            status.textContent = '2. W_K and W_V produce Key (topic tag) and Value (clue content) for each prompt token';
+            status.classList.add('active');
+            wChip.style.borderColor='var(--accent)'; wChip.style.color='var(--accent)';
+          }
+        },
+        {
+          name: '3. Store in KV Cache',
+          delay: 1500,
+          run: async () => {
+            status.textContent = '3. Result: 3 token notes written into the KV Cache in VRAM. Ready for Decode!';
+            nbBox.style.borderColor='var(--accent)';
+            nbHolder.innerHTML = '';
+            nbHolder.appendChild(mtx(Array.from({length:3},()=>Array(8).fill('')), {small:true}));
+            nbHolder.querySelectorAll('.cell').forEach(paintInk);
+            nbLabel.innerHTML = '<b>3</b> prompt tokens cached in RAM (0 re-compute)';
+            check.innerHTML = `KV Cache generated during Prefill! All past context is safely stored in memory <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.4 Decode with KV Cache (Constant 1x4096 Input) ---- */
+P3.push({
+  title:'Decode with KV Cache: Flat compute at constant 1x4096',
+  text:`<h2>Only 1 vector enters the 94 layers</h2>
+    <p>Now watch how the autoregressive loop runs with the KV Cache in place:</p>
+    <p>When generating Token 2 (word: "the"), instead of feeding a 4-token matrix into the 94 layers, the model feeds <b>ONLY the single 1st token vector ("on", 1x4096)</b>!</p>
+    <p>• <b>Step 1 (Emit "on"):</b> Input "sat" (1x8) -> <b>8 MACs</b> (reads 3 cached notes in RAM)<br>
+       • <b>Step 2 (Emit "the"):</b> Input "on" (1x8) -> <b>8 MACs</b> (reads 4 cached notes in RAM)<br>
+       • <b>Step 3 (Emit "mat"):</b> Input "the" (1x8) -> <b>8 MACs</b> (reads 5 cached notes in RAM)<br>
+       • <b>Step 4 (Emit "."):</b> Input "mat" (1x8) -> <b>8 MACs</b> (reads 6 cached notes in RAM)</p>
+    <div class="key"><b>Constant O(1) Compute:</b> Total math needed is 8 + 8 + 8 + 8 = <b>32 MACs</b> (slashed from 144 MACs). The input to all 94 layers is <b>always strictly 1x4096</b>, regardless of how long the sequence becomes!</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. KV Cache Ready: Past 3 tokens cached in RAM. Only 1 vector enters 94 layers!');
+    wrap.appendChild(status);
+
+    const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
+
+    // Pocket Notebook in RAM
     const nbBox = el('div','col'); nbBox.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
     nbBox.appendChild(el('div','caption','<b>Pocket Notebook (KV Cache in RAM)</b>'));
     const nbTable = el('div','kvTable');
@@ -2273,10 +2507,10 @@ P3.push({
 
     // 1-Token Input entering layer
     const layerBox = el('div','col'); layerBox.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
-    layerBox.appendChild(el('div','caption','<b>94 Layers Compute: ONLY 1 Vector (1x8)</b>'));
+    layerBox.appendChild(el('div','caption','<b>94 Layers Compute: STRICTLY 1 Vector (1x8)</b>'));
     const inHolder = el('div'); inHolder.style.margin='auto 0';
     layerBox.appendChild(inHolder);
-    const costTag = el('div','tag','Constant Math: Exactly 8 MACs per step');
+    const costTag = el('div','tag','Flat Constant Math: Exactly 8 MACs per step');
     costTag.style.cssText += ';font-size:11px;padding:4px 10px;border-color:var(--ok);color:var(--ok);background:var(--okWash);';
     layerBox.appendChild(costTag);
     compRow.appendChild(layerBox);
@@ -2369,7 +2603,7 @@ P3.push({
   }
 });
 
-/* ---- 3.3 Slicing KV Cache on 4 GPUs ---- */
+/* ---- 3.5 Slicing KV Cache on 4 GPUs ---- */
 P3.push({
   title:'Slicing the KV Cache: How 4 GPUs divide the notebook',
   text:`<h2>Partitioning the notebook across 4 GPUs</h2>
@@ -2480,7 +2714,7 @@ P3.push({
   }
 });
 
-/* ---- 3.4 One Decode Step ---- */
+/* ---- 3.6 One Decode Step ---- */
 P3.push({
   title:'One Decode Step: Generating 1 Token on 4 GPUs',
   text:`<h2>The 7-step hardware cycle for one new word</h2>
@@ -2616,146 +2850,7 @@ P3.push({
   }
 });
 
-/* ---- 3.5 Autoregressive Generation Loop ---- */
-P3.push({
-  title:'The Autoregressive Loop: Streaming tokens one-by-one',
-  text:`<h2>Watching the sequence grow in real time</h2>
-    <p>The prompt was: <code>"The cat sat"</code> (Tokens 1, 2, 3).</p>
-    <p>Now watch the generation loop run 4 consecutive decode steps:</p>
-    <p>• Step 1: Input "sat" -> outputs <b>"on"</b> (KV Cache length = 4)<br>
-       • Step 2: Input "on" -> outputs <b>"the"</b> (KV Cache length = 5)<br>
-       • Step 3: Input "the" -> outputs <b>"mat"</b> (KV Cache length = 6)<br>
-       • Step 4: Input "mat" -> outputs <b>"."</b> (KV Cache length = 7)</p>
-    <div class="key"><b>Dynamic Cache Growth:</b> With every new token emitted, exactly 1 column is added to each GPU's KV Cache. The cache grows dynamically in VRAM until the sentence ends.</div>`,
-  setup(body, id){
-    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. Initial State: Prompt tokens cached in GPU memory (len = 3)');
-    wrap.appendChild(status);
-
-    // Token stream
-    const streamBox = el('div','col');
-    streamBox.appendChild(el('div','caption','<b>Generated Output Stream:</b>'));
-    const stream = el('div','tokenStream');
-    const p1 = el('div','tokenPill prompt','The'); stream.appendChild(p1);
-    const p2 = el('div','tokenPill prompt','cat'); stream.appendChild(p2);
-    const p3 = el('div','tokenPill prompt','sat'); stream.appendChild(p3);
-    const generatedPills = [
-      el('div','tokenPill','on'),
-      el('div','tokenPill','the'),
-      el('div','tokenPill','mat'),
-      el('div','tokenPill','.')
-    ];
-    streamBox.appendChild(stream);
-    wrap.appendChild(streamBox);
-
-    // 4 GPUs Cache Growth Row
-    const gpuRow = el('div','row'); gpuRow.style.gap='8px';
-    const cacheCards = [];
-    for(let g=0; g<4; g++){
-      const inner = el('div','col'); inner.style.gap='4px';
-      const cap = el('div','caption',`<b>GPU ${g} KV Cache</b><br>(len = 3)`);
-      inner.appendChild(cap);
-      const cacheContainer = el('div','kvTable');
-      const m = mtx(Array.from({length:3},()=>Array(3).fill('')), {colorOf:()=>g, small:true});
-      cacheContainer.appendChild(m);
-      inner.appendChild(cacheContainer);
-      const bx = gpuBox(g, inner);
-      gpuRow.appendChild(bx);
-      cacheCards.push({bx, cap, cacheContainer, g});
-    }
-    wrap.appendChild(gpuRow);
-
-    const check = el('div','caption','');
-    check.style.marginTop='4px';
-    wrap.appendChild(check);
-
-    body.appendChild(wrap);
-
-    createStepper({
-      container: body,
-      id,
-      phases: [
-        {
-          name: 'Initial State',
-          delay: 1100,
-          run: async () => {
-            status.textContent = '1. Initial: Prompt tokens "The", "cat", "sat" cached in all 4 GPUs (len = 3)';
-            status.classList.remove('active');
-            generatedPills.forEach(p=>p.remove());
-            cacheCards.forEach(c=>{
-              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 3)`;
-              c.cacheContainer.innerHTML = '';
-              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(3).fill('')), {colorOf:()=>c.g, small:true}));
-              c.bx.classList.remove('active');
-            });
-            check.innerHTML = '';
-          }
-        },
-        {
-          name: 'Token 4: "on"',
-          delay: 1400,
-          run: async () => {
-            status.textContent = 'Step 1: Input "sat" -> Emits "on" (KV Cache expands to length 4)';
-            status.classList.add('active');
-            const pill = generatedPills[0]; pill.classList.add('new'); stream.appendChild(pill);
-            cacheCards.forEach(c=>{
-              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 4)`;
-              c.cacheContainer.innerHTML = '';
-              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(4).fill('')), {colorOf:()=>c.g, small:true}));
-              c.bx.classList.add('active');
-            });
-          }
-        },
-        {
-          name: 'Token 5: "the"',
-          delay: 1400,
-          run: async () => {
-            status.textContent = 'Step 2: Input "on" -> Emits "the" (KV Cache expands to length 5)';
-            generatedPills[0].classList.remove('new');
-            const pill = generatedPills[1]; pill.classList.add('new'); stream.appendChild(pill);
-            cacheCards.forEach(c=>{
-              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 5)`;
-              c.cacheContainer.innerHTML = '';
-              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(5).fill('')), {colorOf:()=>c.g, small:true}));
-            });
-          }
-        },
-        {
-          name: 'Token 6: "mat"',
-          delay: 1400,
-          run: async () => {
-            status.textContent = 'Step 3: Input "the" -> Emits "mat" (KV Cache expands to length 6)';
-            generatedPills[1].classList.remove('new');
-            const pill = generatedPills[2]; pill.classList.add('new'); stream.appendChild(pill);
-            cacheCards.forEach(c=>{
-              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 6)`;
-              c.cacheContainer.innerHTML = '';
-              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(6).fill('')), {colorOf:()=>c.g, small:true}));
-            });
-          }
-        },
-        {
-          name: 'Token 7: "."',
-          delay: 1400,
-          run: async () => {
-            status.textContent = 'Step 4: Input "mat" -> Emits "." (Sentence complete! KV Cache len = 7)';
-            generatedPills[2].classList.remove('new');
-            const pill = generatedPills[3]; pill.classList.add('new'); stream.appendChild(pill);
-            cacheCards.forEach(c=>{
-              c.cap.innerHTML = `<b>GPU ${c.g} KV Cache</b><br>(len = 7)`;
-              c.cacheContainer.innerHTML = '';
-              c.cacheContainer.appendChild(mtx(Array.from({length:3},()=>Array(7).fill('')), {colorOf:()=>c.g, small:true}));
-            });
-            check.innerHTML = `Full sentence generated token-by-token: "The cat sat on the mat." <span class="okmark">✓</span>`;
-            status.classList.remove('active');
-          }
-        }
-      ]
-    });
-  }
-});
-
-/* ---- 3.6 Memory Wall Race ---- */
+/* ---- 3.7 Memory Wall Race ---- */
 P3.push({
   title:'The Memory Wall: Why Decode is Bandwidth-Bound (1 GPU vs 4 GPUs)',
   text:`<h2>Why generating words is all about memory bandwidth</h2>
