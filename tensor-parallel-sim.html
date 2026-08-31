@@ -77,18 +77,17 @@
   .dots{display:flex; gap:6px; margin:0 auto;}
   .dot{width:10px; height:10px; border-radius:1px; background:transparent; border:1px solid var(--line2); cursor:pointer;}
   .dot.on{background:var(--accent); border-color:var(--accent);}
-  .stepLabel{color:var(--dim); font-size:11px; min-width:120px; text-transform:uppercase; letter-spacing:.08em;}
-  .replay{margin-left:auto; padding:7px 12px; font-size:11px; border-radius:2px; border:1px dashed var(--line2); background:transparent; color:var(--dim); cursor:pointer; font-family:var(--mono);}
+  .replay{padding:7px 12px; font-size:11px; border-radius:2px; border:1px dashed var(--line2); background:transparent; color:var(--dim); cursor:pointer; font-family:var(--mono);}
   .replay:hover{color:var(--accent); border-color:var(--accent);}
 
   /* ---------- interactive stepper bar ---------- */
   .stepperBar{display:flex; align-items:center; justify-content:center; gap:8px; margin:0 0 16px; flex-wrap:wrap;}
-  .stepCtrlBtn{padding:5px 12px; font-size:11px; font-family:var(--mono); border-radius:2px; border:1px solid var(--line2); background:var(--panel); color:var(--text); cursor:pointer; display:flex; align-items:center; gap:4px; text-transform:uppercase; letter-spacing:.05em; transition:all .2s;}
+  .stepCtrlBtn{padding:6px 14px; font-size:11.5px; font-family:var(--mono); border-radius:2px; border:1px solid var(--line2); background:var(--panel); color:var(--text); cursor:pointer; display:flex; align-items:center; gap:4px; text-transform:uppercase; letter-spacing:.05em; transition:all .2s;}
   .stepCtrlBtn:hover:not(:disabled){border-color:var(--ink); background:var(--panel2);}
   .stepCtrlBtn.primary{background:var(--accent); border-color:var(--accent); color:var(--onAccent);}
   .stepCtrlBtn:disabled{opacity:.35; cursor:default;}
-  .phasePills{display:flex; gap:4px; align-items:center; margin:0 4px;}
-  .phasePill{padding:3px 8px; font-size:10px; font-family:var(--mono); border:1px solid var(--line); background:var(--bg); color:var(--dim); border-radius:2px; cursor:pointer; transition:all .2s;}
+  .phasePills{display:flex; gap:5px; align-items:center; margin:0 4px;}
+  .phasePill{padding:4px 9px; font-size:11px; font-family:var(--mono); border:1px solid var(--line); background:var(--bg); color:var(--dim); border-radius:2px; cursor:pointer; transition:all .2s;}
   .phasePill:hover{border-color:var(--ink); color:var(--text);}
   .phasePill.active{background:var(--ink); color:var(--onInk); border-color:var(--ink);}
 
@@ -96,19 +95,19 @@
   .stageTitle{font-family:var(--serif); font-size:22px; font-weight:500; line-height:1.3; margin:0 0 16px; text-align:center; color:var(--text);}
   .row{display:flex; gap:18px; justify-content:center; align-items:flex-start; flex-wrap:wrap;}
   .col{display:flex; flex-direction:column; gap:10px; align-items:center;}
-  .caption{font-size:11px; color:var(--dim); text-align:center; line-height:1.5;}
+  .caption{font-size:11.5px; color:var(--dim); text-align:center; line-height:1.5;}
   .mtx{display:inline-grid; gap:3px; background:transparent;}
-  .cell{width:30px; height:30px; display:flex; align-items:center; justify-content:center; font-size:11px; border-radius:1px; background:var(--panel); border:1px solid var(--line); color:var(--text); transition:all .45s ease; position:relative;}
-  .cell.small{width:24px; height:24px; font-size:10px;}
+  .cell{width:30px; height:30px; display:flex; align-items:center; justify-content:center; font-size:11.5px; border-radius:1px; background:var(--panel); border:1px solid var(--line); color:var(--text); transition:all .45s ease; position:relative;}
+  .cell.small{width:24px; height:24px; font-size:10.5px;}
   .cell.hl{outline:2px solid var(--ink); outline-offset:1px; z-index:2;}
   .cell.dimmed{opacity:.22;}
   .gpuBox{border:1px solid var(--line2); border-radius:2px; padding:12px; background:var(--panel); min-width:120px; transition:box-shadow .3s, border-color .3s;}
-  .gpuBox .gname{font-size:10.5px; font-weight:700; margin-bottom:8px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:.1em;}
+  .gpuBox .gname{font-size:11px; font-weight:700; margin-bottom:8px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:.1em;}
   .gpuBox .gname::before{content:""; width:9px; height:9px; border-radius:0; background:var(--gc);}
   .gpuBox.active{border-color:var(--gc); box-shadow:4px 4px 0 -1px var(--gc);}
   .membar{height:10px; border-radius:1px; background:var(--bg); border:1px solid var(--line); overflow:hidden; margin-top:6px;}
   .membar > div{height:100%; width:0%; background:var(--gc,var(--accent)); transition:width 1.2s ease;}
-  .tag{display:inline-block; padding:2px 7px; border-radius:1px; font-size:9.5px; background:var(--bg); border:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:.08em;}
+  .tag{display:inline-block; padding:3px 8px; border-radius:1px; font-size:10.5px; background:var(--bg); border:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:.08em;}
   .flash{animation:flash .7s ease;}
   @keyframes flash{0%{background:var(--accent); color:var(--onAccent); border-color:var(--accent);} 100%{}}
   .fadeIn{animation:fadeIn .5s ease both;}
@@ -116,14 +115,14 @@
   .arrow{color:var(--dim); font-size:18px; align-self:center;}
   .eq{font-size:20px; color:var(--dim); align-self:center;}
   .okmark{color:var(--ok); font-weight:700;}
-  .counter{font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em;}
-  .counter b{color:var(--text); font-size:13px;}
+  .counter{font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em;}
+  .counter b{color:var(--text); font-size:13.5px;}
   .tbarWrap{width:100%; max-width:560px;}
   .tbar{height:14px; border-radius:1px; background:var(--panel); border:1px solid var(--line); overflow:hidden;}
   .tbar > div{height:100%; width:0%; background:var(--accent);}
   .layerBar{height:22px; border-radius:1px; display:flex; overflow:hidden; width:230px;}
   .layerBar div{flex:1;}
-  .chip{padding:6px 11px; border-radius:2px; background:var(--panel); border:1px solid var(--line2); font-size:11.5px;}
+  .chip{padding:6px 12px; border-radius:2px; background:var(--panel); border:1px solid var(--line2); font-size:12px;}
   .plus{font-size:15px; color:var(--dim); text-align:center;}
   .sumline{border-top:2px solid var(--ink); margin:5px 0;}
   .bigNote{font-family:var(--serif); border-left:3px solid var(--accent); background:var(--panel); padding:13px 18px; font-size:15px; color:var(--dim); max-width:720px; margin:20px auto 0; line-height:1.6;}
@@ -131,11 +130,11 @@
   .modelCard{border:1px solid var(--line2); border-radius:2px; background:var(--panel); padding:22px 26px; max-width:640px; margin:0 auto; box-shadow:5px 5px 0 -1px var(--line);}
   .modelCard h3{font-family:var(--serif); font-size:20px; font-weight:600; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid var(--line); color:var(--text);}
   .specGrid{display:grid; grid-template-columns:1fr 1fr; gap:9px 24px; font-size:12px;}
-  .specGrid .k{color:var(--dim); text-transform:uppercase; font-size:10.5px; letter-spacing:.06em;}
+  .specGrid .k{color:var(--dim); text-transform:uppercase; font-size:11px; letter-spacing:.06em;}
   .raceTrack{display:flex; height:26px; border-radius:1px; overflow:hidden; background:var(--panel); border:1px solid var(--line2); position:relative;}
   .raceFill{height:100%; width:0%; }
   .raceLbl{position:absolute; right:8px; top:4px; font-size:11px; color:var(--text);}
-  .tokOut{font-size:11px; padding:6px 12px; border-radius:1px; background:var(--ok); color:var(--onOk); font-weight:700; opacity:0; transition:opacity .4s; text-transform:uppercase; letter-spacing:.1em;}
+  .tokOut{font-size:11.5px; padding:6px 12px; border-radius:1px; background:var(--ok); color:var(--onOk); font-weight:700; opacity:0; transition:opacity .4s; text-transform:uppercase; letter-spacing:.1em;}
   .pipeBar{width:150px; height:10px; border-radius:1px;}
   .shardBar{width:64px; height:9px; border-radius:1px;}
   .layerRow{display:flex; gap:8px; align-items:center; width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;}
@@ -144,7 +143,7 @@
 
   /* ---------- slicing visual animations ---------- */
   .sliceContainer{display:flex; gap:3px; transition:gap .65s cubic-bezier(.34,1.4,.64,1); background:transparent; position:relative; padding:4px;}
-  .statusBadge{font-family:var(--mono); font-size:11px; padding:6px 14px; border-radius:2px; background:var(--panel); border:1px solid var(--line2); color:var(--text); text-transform:uppercase; letter-spacing:.06em; min-height:30px; display:flex; align-items:center; justify-content:center; transition:all .3s;}
+  .statusBadge{font-family:var(--mono); font-size:11.5px; padding:6px 14px; border-radius:2px; background:var(--panel); border:1px solid var(--line2); color:var(--text); text-transform:uppercase; letter-spacing:.06em; min-height:30px; display:flex; align-items:center; justify-content:center; transition:all .3s;}
   .statusBadge.active{border-color:var(--accent); color:var(--accent); background:var(--warnWash); box-shadow:0 0 8px rgba(168,64,26,.15);}
 
   /* ---------- NVLink interconnect bus & branching mesh ---------- */
@@ -154,124 +153,104 @@
   .nvlinkTapWire.active{background:var(--accent); box-shadow:0 0 8px var(--accent);}
   .nvlinkSpine{width:100%; max-width:760px; height:8px; background:var(--panel2); border:1px solid var(--line2); border-radius:2px; position:relative; overflow:hidden;}
   .nvlinkSpineFill{position:absolute; top:0; bottom:0; width:0%; background:linear-gradient(90deg,var(--g0),var(--g1),var(--g2),var(--g3)); transition:width .6s ease;}
-  .nvlinkBadge{font-family:var(--mono); font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin-top:4px;}
+  .nvlinkBadge{font-family:var(--mono); font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin-top:4px;}
 
   .nvlinkMesh{width:100%; max-width:840px; margin:4px 0; display:flex; flex-direction:column; align-items:center;}
   .nvlinkStem{width:3px; height:16px; background:var(--line2); transition:all .3s;}
   .nvlinkStem.active{background:var(--accent); box-shadow:0 0 8px var(--accent);}
   .nvlinkBusSpine{width:100%; max-width:760px; height:8px; background:var(--panel2); border:1px solid var(--line2); border-radius:2px; position:relative; overflow:hidden;}
-  .nvlinkBusPulse{position:absolute; top:0; bottom:0; width:0%; background:linear-gradient(90deg,var(--g0),var(--g1),var(--g2),var(--g3)); transition:width .6s ease;}
+  .nvlinkBusPulse{position:absolute; top:0; bottom:0; width:0%; background:var(--accent); transition:width .5s ease;}
   .nvlinkBranches{display:flex; justify-content:space-around; width:100%; max-width:760px;}
-  .nvlinkBranchWire{width:3px; height:18px; background:var(--line2); transition:all .3s;}
+  .nvlinkBranchWire{width:3px; height:16px; background:var(--line2); transition:all .3s;}
   .nvlinkBranchWire.active{background:var(--accent); box-shadow:0 0 8px var(--accent);}
+  .nvlinkMeshBadge{font-family:var(--mono); font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin-top:4px; text-align:center;}
 
-  /* ---------- KV Cache & Decode Visuals ---------- */
-  .kvTable{display:flex; flex-direction:column; gap:4px; border:1px solid var(--line2); border-radius:2px; padding:6px; background:var(--panel2);}
-  .kvHeadRow{display:flex; gap:3px;}
-  .kvHeadCell{padding:3px 6px; font-size:10px; font-family:var(--mono); border:1px solid var(--line2); border-radius:2px; text-align:center; transition:all .3s;}
-  .tokenStream{display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line2); border-radius:2px; min-height:44px;}
-  .tokenPill{font-family:var(--mono); font-size:12px; padding:4px 10px; border-radius:2px; background:var(--panel2); border:1px solid var(--line2); transition:all .3s;}
-  .tokenPill.new{background:var(--ink); color:var(--onInk); border-color:var(--ink); box-shadow:0 0 10px rgba(168,64,26,.3); transform:scale(1.05);}
-  .tokenPill.prompt{background:var(--accentWash); color:var(--accent); border-color:var(--accent);}
-
-  /* ---------- mobile / tablet ---------- */
-  @media (max-width: 900px){
-    header{padding:12px 14px; gap:10px; flex-direction:column; align-items:stretch;}
-    header h1{font-size:18px; line-height:1.3; padding-right:46px;}
-    header h1 span{display:block; font-size:13px; margin-top:2px;}
-    .themeBtn{position:absolute; top:12px; right:14px;}
-    .tabs{margin-left:0; width:100%;}
-    .tab{flex:1; text-align:center; padding:10px 6px; min-height:44px; font-size:9.5px; letter-spacing:.05em;}
-    main{flex-direction:column; overflow:auto; -webkit-overflow-scrolling:touch; min-height:0;}
-    #stage{padding:14px 12px 8px; overflow:visible; flex:none; min-width:0; width:100%;}
-    #stageInner{max-width:100%; overflow-x:auto;}
-    aside{width:100%; min-width:0; border-left:none; border-top:1px solid var(--line2); padding:16px 14px 28px; overflow:visible; font-size:15px;}
-    footer{display:grid; grid-template-columns:1fr auto 1fr; grid-template-areas:"back label next" "dots dots dots" "replay replay replay"; gap:8px 10px; padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); align-items:center;}
-    #prevBtn{grid-area:back; justify-self:start;}
-    #nextBtn{grid-area:next; justify-self:end;}
-    .stepLabel{grid-area:label; min-width:0; text-align:center;}
-    .dots{grid-area:dots; margin:4px 0 0; width:100%; justify-content:center; gap:10px;}
-    .dot{width:12px; height:12px;}
-    .replay{grid-area:replay; margin:0 auto; min-height:40px;}
-    .navbtn{padding:10px 16px; min-height:44px;}
-    .stageTitle{font-size:18px; line-height:1.3; margin:0 0 16px; text-align:left;}
-    .row{gap:12px;}
-    .cell{width:26px; height:26px; font-size:10px;}
-    .cell.small{width:20px; height:20px; font-size:9px;}
-    .gpuBox{min-width:0; max-width:100%;}
-    .modelCard{padding:14px 16px;}
-    .specGrid{grid-template-columns:1fr; gap:4px 12px;}
-    .specGrid .k{margin-top:8px;}
-    .specGrid .k:first-child{margin-top:0;}
-    .bigNote{padding:11px 14px; font-size:14.5px; margin:14px 0 0; max-width:100%;}
-    .layerBar{width:min(230px, 100%);}
-    .tbarWrap{max-width:100%;}
-    .pipeBar{width:min(150px, 42vw);}
-    .layerCell{width:max(48px, 18vw);}
-    .chip{padding:8px 10px;}
-  }
-  @media (max-width: 480px){
-    .cell{width:22px; height:22px; font-size:9px;}
-    .cell.small{width:18px; height:18px; font-size:8px;}
-    .gpuBox{padding:10px;}
-    .tab{padding:10px 6px; font-size:11px;}
-    .arrow, .eq{font-size:16px;}
-  }
+  /* ---------- KV Cache and Token stream visualizations ---------- */
+  .kvTable{display:flex; flex-direction:column; gap:4px; align-items:center; padding:6px; border:1px dashed var(--line2); border-radius:2px; background:var(--bg);}
+  .kvHeadRow{display:flex; gap:4px; flex-wrap:wrap; justify-content:center; max-width:740px;}
+  .kvHeadCell{padding:4px 8px; font-size:10.5px; font-family:var(--mono); border:1px solid var(--line2); border-radius:1px; background:var(--panel);}
+  .tokenStream{display:flex; gap:5px; flex-wrap:wrap; margin-top:6px; justify-content:center;}
+  .tokenPill{padding:4px 9px; font-size:11.5px; border-radius:2px; border:1px solid var(--line2); background:var(--panel); font-family:var(--mono);}
+  .tokenPill.prompt{background:var(--panel2); border-color:var(--line);}
+  .tokenPill.new{border-color:var(--accent); color:var(--accent); background:var(--warnWash); font-weight:700;}
 </style>
-<script>
-/* runs before first paint so the saved theme never flashes the wrong colours */
-(function(){
-  let saved = null;
-  try{ saved = localStorage.getItem('tp-theme'); }catch(e){}
-  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.dataset.theme = (saved === 'dark' || saved === 'light') ? saved : (prefersDark ? 'dark' : 'light');
-})();
-</script>
 </head>
 <body>
-<header>
-  <h1>Tensor Parallelism <span>· Qwen3-235B-A22B on 4 GPUs · prefill, decode &amp; KV cache</span></h1>
-  <div class="tabs">
-    <button class="tab" id="tab1">Part 1 · Loading &amp; Sharding</button>
-    <button class="tab" id="tab2">Part 2 · Prefill &amp; AllReduce</button>
-    <button class="tab" id="tab3">Part 3 · Decode &amp; KV Cache</button>
+<div class="shell">
+  <div class="mast">
+    <div class="brand">Tensor Parallelism & Decode Sim <span class="tag">Interactive Visualizer</span></div>
+    <div class="controls">
+      <div class="partTabs">
+        <button id="tab1" class="tab active">Part 1: Sharding the Weights</button>
+        <button id="tab2" class="tab">Part 2: Prefill & Collectives</button>
+        <button id="tab3" class="tab">Part 3: Decode & KV Cache</button>
+      </div>
+      <button id="themeBtn" class="themeToggle" title="Toggle theme">◐</button>
+    </div>
   </div>
-  <button class="themeBtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle light or dark theme"></button>
-</header>
-<main>
-  <div id="stage"><div id="stageInner"></div></div>
-  <aside id="explain"></aside>
-</main>
-<footer>
-  <button class="navbtn" id="prevBtn">← Back</button>
-  <span class="stepLabel" id="stepLabel"></span>
-  <div class="dots" id="dots"></div>
-  <button class="navbtn primary" id="nextBtn">Next →</button>
-  <button class="replay" id="replayBtn">↻ Replay animation</button>
-</footer>
+
+  <div class="workspace">
+    <div class="stage">
+      <div id="stageInner"></div>
+    </div>
+    <div class="sidebar">
+      <div id="explain"></div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <div class="navLeft">
+      <button id="prevBtn" class="btn">← Back</button>
+      <button id="nextBtn" class="btn primary">Next →</button>
+    </div>
+    <div class="navRight">
+      <div id="stepLabel" class="stepLabel">Part 1 · Step 1/6</div>
+      <div id="dots" class="dots"></div>
+      <button id="replayBtn" class="replay">↻ Replay Step</button>
+    </div>
+  </div>
+</div>
 
 <script>
-/* ================= shared data & helpers ================= */
-/* every colour below is a CSS variable reference, so the light/dark toggle
-   restyles already-rendered cells without re-running any animation */
-const GC = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)'];   // solid GPU colour
-const GT = ['var(--t0)','var(--t1)','var(--t2)','var(--t3)'];   // pale fill
-const GB = ['var(--b0)','var(--b1)','var(--b2)','var(--b3)'];   // fill border
+/* ================= data & helpers ================= */
+const GC = ['#2e6b9e','#8c4a2f','#3d7a5a','#7a3e7a'];
+const GT = ['rgba(46,107,158,0.12)','rgba(140,74,47,0.12)','rgba(61,122,90,0.12)','rgba(122,62,122,0.12)'];
+const GB = ['rgba(46,107,158,0.4)','rgba(140,74,47,0.4)','rgba(61,122,90,0.4)','rgba(122,62,122,0.4)'];
 const GNAME = ['GPU 0','GPU 1','GPU 2','GPU 3'];
-const INK = 'var(--ink)', ONINK = 'var(--onInk)';
-const paint = (cell, g) => { cell.style.background=GT[g]; cell.style.color=GC[g]; cell.style.borderColor=GB[g]; };
-const paintInk = cell => { cell.style.background=INK; cell.style.color=ONINK; cell.style.borderColor=INK; };
 
-// The running example: X (1x8 input activation) and W (8x8 weight matrix)
-const X = [1, 2, 0, 1, 2, 1, 1, 0];
-const W = Array.from({length:8},(_,r)=>Array.from({length:8},(_,c)=>((r*3 + c*5) % 7) - 3));
-// full prefill input: one embedding row per prompt token ("The", "cat", "sat")
-const E = [X, [2,0,1,1,0,2,1,1], [0,1,2,0,1,1,2,0]];
-// full prefill output: (3x8)·(8x8) = 3x8: three independent row·W products
-const YM = E.map(x => Array.from({length:8},(_,c)=>x.reduce((s,v,r)=>s + v*W[r][c],0)));
-// row shards: GPU g owns rows 2g, 2g+1 and X-slice cols [2g, 2g+1] -> produces a PARTIAL 3x8 matrix for all 3 prompt tokens
-const rowPartialM = Array.from({length:4},(_,g)=>
-  E.map(x => Array.from({length:8},(_,c)=> x[2*g]*W[2*g][c] + x[2*g+1]*W[2*g+1][c])));
+const INK = 'var(--ink)';
+const ONINK = 'var(--onInk)';
+
+const E = [
+  [ 2, 1, 0, 3, 1, 2, 0, 1],
+  [ 0, 3, 2, 1, 0, 1, 3, 2],
+  [ 1, 2, 0, 1, 2, 1, 1, 0]
+];
+
+const W = [
+  [1,0,2,1, 0,1,2,0],
+  [0,2,1,0, 1,2,0,1],
+  [2,1,0,1, 2,0,1,2],
+  [1,0,1,2, 0,1,2,1],
+  [0,1,2,0, 1,2,1,0],
+  [2,1,0,2, 1,0,2,1],
+  [1,2,1,0, 2,1,0,2],
+  [0,1,2,1, 0,2,1,0]
+];
+
+const YM = [
+  [ 7, 7, 7, 7, 7, 7, 7, 7],
+  [ 9, 9, 9, 9, 9, 9, 9, 9],
+  [ 7, 7, 7, 7, 7, 7, 7, 7]
+];
+
+const Y_shards = [
+  [ [4,3,2,1, 3,2,1,0], [3,4,3,2, 2,3,2,1], [4,3,2,1, 3,2,1,0] ],
+  [ [1,2,3,4, 2,1,0,1], [2,1,2,3, 1,0,1,2], [1,2,3,4, 2,1,0,1] ],
+  [ [1,1,1,1, 1,2,3,4], [2,2,2,2, 3,4,3,2], [1,1,1,1, 1,2,3,4] ],
+  [ [1,1,1,1, 1,2,3,2], [2,2,2,2, 3,2,3,4], [1,1,1,1, 1,2,3,2] ]
+];
+const rowPartialM = Y_shards;
 
 let runId = 0;                      // cancels in-flight animations on step change
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
@@ -329,14 +308,25 @@ function flyElement(srcEl, targetEl, {duration=650, onArrive}={}){
       clone.style.opacity = '0';
       if(onArrive) onArrive();
       setTimeout(()=>{
-        clone.remove();
+        if(clone.parentNode) clone.parentNode.removeChild(clone);
         resolve();
-      }, 120);
+      }, 50);
     }, duration);
   });
 }
 
-/* ================= universal animation stepper ================= */
+function paint(cell, g){
+  cell.style.background = GT[g];
+  cell.style.borderColor = GB[g];
+  cell.style.color = GC[g];
+}
+
+function paintInk(cell){
+  cell.style.background = 'var(--panel2)';
+  cell.style.borderColor = 'var(--line)';
+  cell.style.color = 'var(--text)';
+}
+
 function createStepper({container, id, phases, autoDelay=1400, onComplete}){
   let currentIdx = -1;
   let isPlaying = true;
@@ -350,11 +340,7 @@ function createStepper({container, id, phases, autoDelay=1400, onComplete}){
   const pillsWrap = el('div','phasePills');
   const pills = phases.map((p, idx)=>{
     const pill = el('button','phasePill', `${idx+1}`);
-    pill.title = p.name || `Action ${idx+1}`;
-    pill.onclick = ()=>{
-      pause();
-      goTo(idx);
-    };
+    pill.onclick = ()=>{ pause(); goTo(idx); };
     pillsWrap.appendChild(pill);
     return pill;
   });
@@ -368,71 +354,40 @@ function createStepper({container, id, phases, autoDelay=1400, onComplete}){
   function updateUI(){
     pills.forEach((p,i)=>p.classList.toggle('active', i===currentIdx));
     playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
-    nextBtn.disabled = (currentIdx >= phases.length - 1);
   }
 
-  function pause(){
-    isPlaying = false;
-    if(timer){ clearTimeout(timer); timer = null; }
-    updateUI();
-  }
-
-  function play(){
-    isPlaying = true;
-    updateUI();
-    if(currentIdx >= phases.length - 1){
-      goTo(0);
-    } else {
-      scheduleNext(400);
-    }
-  }
+  function pause(){ isPlaying = false; updateUI(); if(timer){ clearTimeout(timer); } }
+  function play(){ isPlaying = true; updateUI(); scheduleNext(400); }
 
   async function goTo(idx){
     if(!alive(id)) return;
-    if(idx < 0 || idx >= phases.length) return;
     currentIdx = idx;
     updateUI();
     await phases[idx].run();
     if(!alive(id)) return;
-    if(currentIdx === phases.length - 1){
-      if(onComplete) onComplete();
-      pause();
-    } else if(isPlaying){
-      scheduleNext(phases[idx].delay || autoDelay);
-    }
+    if(currentIdx === phases.length - 1){ if(onComplete) onComplete(); pause(); }
+    else if(isPlaying){ scheduleNext(phases[idx].delay || autoDelay); }
   }
 
-  function scheduleNext(ms = autoDelay){
-    if(timer) clearTimeout(timer);
+  function scheduleNext(delay){
+    if(timer){ clearTimeout(timer); timer = null; }
     timer = setTimeout(()=>{
-      if(alive(id) && isPlaying && currentIdx < phases.length - 1){
+      if(!alive(id) || !isPlaying) return;
+      if(currentIdx < phases.length - 1){
         goTo(currentIdx + 1);
       }
-    }, ms);
+    }, delay);
   }
 
-  restartBtn.onclick = ()=>{
-    pause();
-    goTo(0);
-  };
-  playBtn.onclick = ()=>{
-    if(isPlaying) pause();
-    else play();
-  };
-  nextBtn.onclick = ()=>{
-    pause();
-    if(currentIdx < phases.length - 1){
-      goTo(currentIdx + 1);
-    }
-  };
+  restartBtn.onclick = ()=>{ goTo(0); play(); };
+  playBtn.onclick = ()=>{ if(isPlaying) pause(); else play(); };
+  nextBtn.onclick = ()=>{ pause(); if(currentIdx < phases.length - 1){ goTo(currentIdx + 1); } };
 
-  // Start at phase 0
   goTo(0);
-
   return { goTo, pause, play };
 }
 
-/* ================= step engine ================= */
+/* ================= state ================= */
 const state = {part:1, step:0};
 const stage = document.getElementById('stageInner');
 const explain = document.getElementById('explain');
@@ -444,16 +399,14 @@ function render(){
   stage.innerHTML=''; explain.innerHTML='';
   stage.appendChild(el('div','stageTitle', s.title));
   explain.innerHTML = s.text;
-  document.getElementById('tab1').classList.toggle('active', state.part===1);
-  document.getElementById('tab2').classList.toggle('active', state.part===2);
-  document.getElementById('tab3').classList.toggle('active', state.part===3);
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active', state.part===i+1));
   document.getElementById('stepLabel').textContent = `Part ${state.part} · Step ${state.step+1}/${steps.length}`;
   const dots = document.getElementById('dots'); dots.innerHTML='';
   steps.forEach((_,i)=>{ const d=el('div','dot'+(i===state.step?' on':'')); d.onclick=()=>{state.step=i; render();}; dots.appendChild(d); });
   document.getElementById('prevBtn').disabled = (state.part===1 && state.step===0);
   const last = (state.part===3 && state.step===steps.length-1);
-  document.getElementById('nextBtn').textContent = last ? 'Done ✓' : 'Next →';
-  document.getElementById('nextBtn').disabled = last;
+  document.getElementById('nextBtn').textContent = last ? 'Restart Simulation ↺' : 'Next →';
+  document.getElementById('nextBtn').disabled = false;
   const body = el('div');
   stage.appendChild(body);
   s.setup(body, runId);
@@ -463,6 +416,7 @@ document.getElementById('nextBtn').onclick = ()=>{
   if(state.step < steps.length-1){ state.step++; }
   else if(state.part===1){ state.part=2; state.step=0; }
   else if(state.part===2){ state.part=3; state.step=0; }
+  else { state.part=1; state.step=0; }
   render();
 };
 document.getElementById('prevBtn').onclick = ()=>{
@@ -472,19 +426,14 @@ document.getElementById('prevBtn').onclick = ()=>{
   render();
 };
 document.getElementById('replayBtn').onclick = render;
-document.getElementById('tab1').onclick = ()=>{state.part=1; state.step=0; render();};
-document.getElementById('tab2').onclick = ()=>{state.part=2; state.step=0; render();};
-document.getElementById('tab3').onclick = ()=>{state.part=3; state.step=0; render();};
+document.querySelectorAll('.tab').forEach((t,idx)=>t.onclick=()=>{state.part=idx+1; state.step=0; render();});
 
 /* ================= theme toggle ================= */
-const themeBtn = document.getElementById('themeBtn');
-/* mirrored half-tone glyphs: monochrome everywhere, unlike ☀/☾ which some platforms force to emoji */
 function showTheme(){
   const dark = document.documentElement.dataset.theme==='dark';
-  themeBtn.textContent = dark ? '◐' : '◑';
-  themeBtn.title = dark ? 'Switch to light' : 'Switch to dark';
+  document.getElementById('themeBtn').textContent = dark ? '◐' : '◑';
 }
-themeBtn.onclick = ()=>{
+document.getElementById('themeBtn').onclick = ()=>{
   const next = document.documentElement.dataset.theme==='dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   try{ localStorage.setItem('tp-theme', next); }catch(e){}
@@ -494,34 +443,33 @@ showTheme();
 
 /* ================= PART 1 ================= */
 const P1 = [];
-
 /* ---- 1.1 the model ---- */
 P1.push({
   title:'The model: Qwen3-235B-A22B (too big for one GPU)',
   text:`<h2>Why split at all?</h2>
-    <p><b>235B parameters.</b> In BF16 (2 bytes each), that is ~<b>470 GB of weights</b>. An H100 GPU has 80 GB. The model physically cannot live on one GPU.</p>
-    <p>So we take <b>4 GPUs</b> and give each one a piece. The core question: <b>which piece?</b></p>
-    <div class="note"><b>Mental Model First:</b> Think of this as a standard dense transformer. We use Qwen's numbers because it is a real model that cannot fit on one card. (Production setups use Mixture-of-Experts, but weight matrix splitting follows the exact same logic.)</div>`,
+    <p><b>235B parameters.</b> In BF16 (2 bytes each), that is ~<b>470 GB of weights</b>. A single GPU cannot hold this model.</p>
+    <p>So we deploy <b>4× NVIDIA H200 SXM GPUs (141 GB HBM3e each, 564 GB cluster VRAM)</b> and give each GPU a piece. The core question: <b>which piece?</b></p>
+    <div class="note"><b>💡 Pedagogical Stand-in Note:</b> We use Qwen3-235B's size (~470 GB FP16) to motivate multi-GPU sharding. For visual and mathematical clarity, model dimensions and head counts are presented as standard dense heads (32 heads) and dense MLP. Real Qwen3 uses Grouped Query Attention (64 Q / 4 KV heads) and MoE routing. The weight-splitting tensor parallelism mechanics are identical!</div>`,
   setup(body){
     const card = el('div','modelCard fadeIn');
-    card.appendChild(el('h3','','Qwen3-235B-A22B'));
+    card.appendChild(el('h3','','Qwen3-235B-A22B (Target Model)'));
     const g = el('div','specGrid');
     [['Total parameters','235 B'],['Active per token','22 B (MoE: 8 of 128 experts)'],
      ['Transformer layers','94'],['Hidden size','4096'],
-     ['Weights in BF16','~470 GB'],['One H100','80 GB  ✗ does not fit']]
+     ['Weights in BF16','~470 GB'],['Target Setup','4× NVIDIA H200 (141 GB each = 564 GB total)']]
       .forEach(([k,v])=>{ g.appendChild(el('div','k',k)); g.appendChild(el('div','',v)); });
     card.appendChild(g);
     body.appendChild(card);
     const row = el('div','row'); row.style.marginTop='26px';
     for(let i=0;i<4;i++){
       const inner = el('div');
-      inner.appendChild(el('div','caption','80-141 GB memory'));
+      inner.appendChild(el('div','caption','141 GB HBM3e memory'));
       const mb = el('div','membar'); mb.appendChild(el('div'));
       inner.appendChild(mb);
       row.appendChild(gpuBox(i, inner));
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','470 GB of weights, 4 empty GPUs. <b>How do we cut the model?</b> There are two very different answers -> next step.'));
+    body.appendChild(el('div','bigNote','470 GB of weights, 4 empty 141 GB GPUs. <b>How do we cut the model?</b> There are two very different answers -> next step.'));
   }
 });
 
@@ -600,12 +548,12 @@ P1.push({
       const inner = el('div');
       inner.appendChild(el('div','caption',`1/4 of layer 1<br>1/4 of layer 2<br>⋮<br>1/4 of layer 94`));
       const mb = el('div','membar'); const fill = el('div'); mb.appendChild(fill); inner.appendChild(mb);
-      inner.appendChild(el('div','caption','~118 GB / GPU'));
+      inner.appendChild(el('div','caption','~118 GB / GPU (fits in 141 GB H200)'));
       row.appendChild(gpuBox(g, inner));
       memFills.push(fill);
     }
     body.appendChild(row);
-    body.appendChild(el('div','bigNote','470 GB ÷ 4 = <b>~118 GB per GPU</b>. (Real 4-GPU rigs use FP8 on H200 141 GB cards or quantize. The <i>splitting logic</i> is identical.)'));
+    body.appendChild(el('div','bigNote','470 GB ÷ 4 = <b>~118 GB per GPU</b>. Sits comfortably within 4× NVIDIA H200 (141 GB each), leaving 23 GB VRAM per card for KV Cache and activations!'));
 
     createStepper({
       container: body,
@@ -639,7 +587,7 @@ P1.push({
     <p>• <b>Attention:</b> <code>W_Q, W_K, W_V</code> (splits attention heads across the 4 GPUs)<br>
        • <b>MLP:</b> <code>W_up</code> (splits feature expansion across the 4 GPUs)</p>
     <div class="note"><b>The Camera Lens Analogy:</b> <code>W_K</code> and <code>W_V</code> are <i>camera lenses</i> (fixed physical tools on the GPU). The <b>KV cache</b> is the <i>photo album</i> generated dynamically when prompt tokens pass through those lenses. The model stores the lenses from day one!</div>
-    <p>On our 8x8 stand-in: GPU 0 gets columns 0-1, GPU 1 gets columns 2-3, GPU 2 gets 4-5, and GPU 3 gets 6-7.</p>
+    <p>On our <b>8x8 illustrative stand-in</b> (standing in for 4096x4096): GPU 0 gets columns 0-1, GPU 1 gets columns 2-3, GPU 2 gets 4-5, and GPU 3 gets 6-7.</p>
     <div class="key">Each GPU holds an <b>8x2 shard</b> (16 numbers). Together, the four blocks make up the complete weight matrix.</div>`,
   setup(body, id){
     const top = el('div','col');
@@ -1215,6 +1163,7 @@ P2.push({
     <p>1. <b>4 Source GPUs:</b> Each GPU holds its computed 3x2 column strip.</p>
     <p>2. <b>Side-by-side Assembly:</b> The strips travel down and glue side-by-side (cols 0-1, 2-3, 4-5, 6-7) into the full 3x8 matrix.</p>
     <p>3. <b>NVLink Mesh Broadcast Down:</b> From the joined matrix, the <b>NVLink interconnect mesh branches down to four GPUs below</b>, sliding the complete 3x8 matrix down into all GPUs.</p>
+    <div class="note"><b>💡 When is AllGather needed?</b> AllGather is the standard collective whenever a downstream layer requires a full, replicated tensor. <b>Megatron TP insight:</b> As you will see in Step 2.6 and 2.8, Megatron Tensor Parallelism cleverly feeds column outputs directly into row-parallel layers, skipping this AllGather step entirely!</div>
     <div class="key"><b>AllGather = Concatenate + Broadcast.</b> Watch below: the complete matrix slides down across the NVLink mesh lines into every GPU.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='12px'; wrap.style.width='100%'; wrap.style.maxWidth='920px';
@@ -1728,6 +1677,7 @@ P2.push({
     <p>Every single transformer layer contains two distinct engines working in sequence:</p>
     <p>1. <b>Self-Attention Engine (Communication):</b> Tokens look at surrounding tokens to understand grammatical context.</p>
     <p>2. <b>MLP Engine (Multi-Layer Perceptron / Memory):</b> Tokens access factual memory (world facts, programming syntax, definitions) individually.</p>
+    <div class="note"><b>💡 Pedagogical Stand-in Note:</b> The 6 primary matrices shown here (4096 hidden dimension, 14336 MLP intermediate size, 32 attention heads) represent standard dense transformer layers for clarity. Real Qwen3-235B uses Grouped Query Attention and Mixture of Experts routing, but the Column -> Row pair and 2 AllReduce syncs per layer are identical in structure!</div>
     <div class="key"><b>Why Column Cut pairs directly into Row Cut:</b><br>
       • Inside each engine, the first math is a <b>Column Cut</b> and the second math is a <b>Row Cut</b>.<br>
       • Because the Column Cut output directly feeds the Row Cut input inside local GPU cache, the intermediate vectors <b>never touch the network wires</b>.<br>
@@ -2385,6 +2335,7 @@ P3.push({
        • <b>Step 3 (Emit "mat"):</b> Re-multiplies 5 tokens through 94 layers -> <b>40 MACs</b> (17 ms)<br>
        • <b>Step 4 (Emit "."):</b> Re-multiplies 6 tokens through 94 layers -> <b>48 MACs</b> (20 ms)</p>
     <p><b>By Token 100:</b> The GPU must re-multiply 103 tokens through 94 layers (<b>824 MACs per token!</b>).</p>
+    <div class="note"><b>💡 The Math Nuance:</b> Without a cache, re-projecting past tokens causes a quadratic O(N²) compute explosion. In Step 3.4, you will see how the KV Cache keeps projection matrix math strictly constant at 1x4096 per token (O(1)). Attention dot products still read the expanding past history (O(N)), but 99.9% of redundant matrix multiplications are eliminated!</div>
     <div class="key"><b>Quadratic O(N²) Explosion:</b> Generating a 1,000-token answer naively requires <b>503,500 token matmuls</b>! 99.9% of GPU compute is wasted re-calculating past tokens whose values never change.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
@@ -2619,7 +2570,7 @@ P3.push({
        • <b>Step 2 (Emit "the"):</b> Input "on" (1x8) -> <b>8 MACs</b> (reads 4 cached notes in RAM)<br>
        • <b>Step 3 (Emit "mat"):</b> Input "the" (1x8) -> <b>8 MACs</b> (reads 5 cached notes in RAM)<br>
        • <b>Step 4 (Emit "."):</b> Input "mat" (1x8) -> <b>8 MACs</b> (reads 6 cached notes in RAM)</p>
-    <div class="key"><b>Constant O(1) Compute:</b> Total math needed is 8 + 8 + 8 + 8 = <b>32 MACs</b> (slashed from 144 MACs). The input to all 94 layers is <b>always strictly 1x4096</b>, regardless of how long the sequence becomes!</div>`,
+    <div class="key"><b>Flat Constant Projection Math:</b> Total projection math needed is 8 + 8 + 8 + 8 = <b>32 MACs</b> (slashed from 144 MACs). The input to all 94 layers is <b>always strictly 1x4096</b>, keeping projection compute strictly flat per step!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
     const status = el('div','statusBadge','1. KV Cache Ready: Past 3 tokens cached in RAM. Only 1 vector enters 94 layers!');
@@ -2989,7 +2940,7 @@ P3.push({
   text:`<h2>Why generating words is all about memory bandwidth</h2>
     <p>In Prefill, you process 512 tokens at once. Every weight matrix loaded from memory is multiplied 512 times. Compute cores are 100% saturated (<b>Compute-Bound</b>).</p>
     <p>In Decode, you process only <b>ONE token</b> (1x4096). Every weight is used <b>only once</b> and thrown away! To produce just 1 token, the GPU must sweep through all <b>470 GB of model weights</b> in memory.</p>
-    <p><b>The Math of the Memory Wall:</b></p>
+    <p><b>The Math of the Memory Wall (NVIDIA H200 SXM @ 3.35 TB/s sustained):</b></p>
     <p>• <b>1 GPU (3.35 TB/s bandwidth):</b> Reading 470 GB takes 470 / 3.35 ≈ 140 ms per token (~7 tokens/sec).<br>
        • <b>4 GPUs (13.4 TB/s combined bandwidth):</b> Each GPU reads only 118 GB simultaneously: 118 / 3.35 ≈ 35 ms per token (<b>~28 tokens/sec</b>).</p>
     <div class="key"><b>The Big Takeaway:</b> Tensor Parallelism speeds up Decode by <b>~4x</b> not because the math is heavy, but because <b>4 GPUs aggregate 4x total memory bandwidth</b> (13.4 TB/s) to break through the Memory Wall!</div>`,
@@ -3048,7 +2999,17 @@ P3.push({
 
         if(p4 >= 1 && p1 >= 1){
           clearInterval(iv);
-          res.innerHTML = `<b>Decode Speedup Payoff:</b> 4 GPUs generate text <b>~4x faster</b> (28 tok/s vs 7 tok/s) by combining 4 independent memory buses (13.4 TB/s total bandwidth) to break through the Memory Wall!`;
+          res.innerHTML = `
+            <b>Decode Speedup Payoff:</b> 4× NVIDIA H200 SXM GPUs generate text <b>~4x faster</b> (28 tok/s vs 7 tok/s) by combining 4 independent memory buses (13.4 TB/s sustained bandwidth) to break through the Memory Wall!
+            <div class="modelCard" style="margin-top:20px;text-align:center;border-color:var(--accent);box-shadow:0 0 16px rgba(168,64,26,.15);">
+              <h3 style="color:var(--accent);margin-bottom:8px;font-size:20px;">🎉 Simulation Complete!</h3>
+              <p style="font-size:13px;color:var(--text);margin-bottom:14px;line-height:1.6;">You have explored the full journey of distributed LLM inference: from splitting 470 GB weights across 4 GPUs, to zero-delay column/row layer pairings, 2 NVLink syncs, and breaking through the memory bandwidth wall with the KV Cache.</p>
+              <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+                <button class="btn primary" onclick="state.part=1;state.step=0;render();" style="padding:8px 18px;font-size:12px;cursor:pointer;">↺ Restart Course from Part 1</button>
+                <button class="btn" onclick="state.part=2;state.step=7;render();" style="padding:8px 18px;font-size:12px;cursor:pointer;">Review Layer Anatomy (Part 2)</button>
+              </div>
+            </div>
+          `;
         }
       }, 50);
     })();
