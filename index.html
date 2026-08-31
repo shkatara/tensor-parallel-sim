@@ -276,7 +276,19 @@ const rowPartialM = Array.from({length:4},(_,g)=>
 let runId = 0;                      // cancels in-flight animations on step change
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const alive = id => id === runId;
-const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; };
+
+const el = (tag, cls, html) => {
+  const e=document.createElement(tag);
+  if(cls){
+    e.className=cls;
+    if(cls.includes('statusBadge') || cls.includes('counter')){
+      e.setAttribute('aria-live', 'polite');
+      e.setAttribute('aria-atomic', 'true');
+    }
+  }
+  if(html!=null) e.innerHTML=html;
+  return e;
+};
 
 function mtx(rows, {colorOf, small, values=true, id}={}){
   const m = el('div','mtx');
@@ -501,22 +513,22 @@ P1.push({
   title:'The model: Qwen3-235B-A22B (too big for one GPU)',
   text:`<h2>Why split at all?</h2>
     <p><b>235B parameters.</b> In BF16 (2 bytes each), that is ~<b>470 GB of weights</b>. A single GPU cannot hold this model.</p>
-    <p>So we deploy <b>4× NVIDIA H200 SXM GPUs (141 GB HBM3e each, 564 GB cluster VRAM)</b> and give each GPU a piece. The core question: <b>which piece?</b></p>
-    <div class="note"><b>💡 Pedagogical Stand-in Note:</b> We use Qwen3-235B's size (~470 GB FP16) to motivate multi-GPU sharding. For visual and mathematical clarity, model dimensions and head counts are presented as standard dense heads (32 heads) and dense MLP. Real Qwen3 uses Grouped Query Attention (64 Q / 4 KV heads) and MoE routing. The weight-splitting tensor parallelism mechanics are identical!</div>`,
+    <p>So we deploy <b>4× NVIDIA H200 SXM GPUs (141 GB HBM3e each, 4.8 TB/s peak bandwidth, 564 GB cluster VRAM)</b> and give each GPU a piece. The core question: <b>which piece?</b></p>
+    <div class="note"><b>💡 Pedagogical Stand-in Note:</b> We use Qwen3-235B's size (~470 GB FP16) to motivate multi-GPU sharding. For visual and mathematical clarity, model dimensions and head counts are presented as standard dense heads (32 heads) and dense MLP. Real Qwen3 uses Grouped Query Attention (64 Q / 4 KV heads) and 8-of-128 MoE routing. The weight-splitting tensor parallelism mechanics are identical!</div>`,
   setup(body){
     const card = el('div','modelCard fadeIn');
     card.appendChild(el('h3','','Qwen3-235B-A22B (Target Model)'));
     const g = el('div','specGrid');
     [['Total parameters','235 B'],['Active per token','22 B (MoE: 8 of 128 experts)'],
      ['Transformer layers','94'],['Hidden size','4096'],
-     ['Weights in BF16','~470 GB'],['Target Setup','4× NVIDIA H200 (141 GB each = 564 GB total)']]
+     ['Weights in BF16','~470 GB'],['Target Setup','4× NVIDIA H200 (141 GB, 4.8 TB/s each = 564 GB / 19.2 TB/s total)']]
       .forEach(([k,v])=>{ g.appendChild(el('div','k',k)); g.appendChild(el('div','',v)); });
     card.appendChild(g);
     body.appendChild(card);
     const row = el('div','row'); row.style.marginTop='26px';
     for(let i=0;i<4;i++){
       const inner = el('div');
-      inner.appendChild(el('div','caption','141 GB HBM3e memory'));
+      inner.appendChild(el('div','caption','141 GB HBM3e (4.8 TB/s)'));
       const mb = el('div','membar'); mb.appendChild(el('div'));
       inner.appendChild(mb);
       row.appendChild(gpuBox(i, inner));
@@ -1731,11 +1743,11 @@ P2.push({
     <p>Every single transformer layer contains two distinct engines working in sequence:</p>
     <p>1. <b>Self-Attention Engine (Communication):</b> Tokens look at surrounding tokens to understand grammatical context.</p>
     <p>2. <b>MLP Engine (Multi-Layer Perceptron / Memory):</b> Tokens access factual memory (world facts, programming syntax, definitions) individually.</p>
-    <div class="note"><b>💡 Pedagogical Stand-in Note:</b> The 6 primary matrices shown here (4096 hidden dimension, 14336 MLP intermediate size, 32 attention heads) represent standard dense transformer layers for clarity. Real Qwen3-235B uses Grouped Query Attention and Mixture of Experts routing, but the Column -> Row pair and 2 AllReduce syncs per layer are identical in structure!</div>
+    <div class="note"><b>💡 Pedagogical Stand-in Note:</b> The 7 primary weight matrices per layer (4096 hidden dimension, 14336 dense intermediate size, 32 attention heads) represent standard dense transformer layers for clarity. Real Qwen3-235B uses Grouped Query Attention (64 Q / 4 KV heads) and 8-of-128 MoE routing. The dense Column -> Row projection subroutine is identical; production MoE adds router gating and expert all-to-all communication.</div>
     <div class="key"><b>Why Column Cut pairs directly into Row Cut:</b><br>
       • Inside each engine, the first math is a <b>Column Cut</b> and the second math is a <b>Row Cut</b>.<br>
       • Because the Column Cut output directly feeds the Row Cut input inside local GPU cache, the intermediate vectors <b>never touch the network wires</b>.<br>
-      • <b>The Grand Total:</b> Exactly <b>2 AllReduce network syncs per layer</b> (one after Attention, one after MLP). Everything else runs at full on-chip speed (~3.35 TB/s).</div>`,
+      • <b>The Grand Total:</b> Exactly <b>2 AllReduce network syncs per layer</b> (one after Attention, one after MLP). Everything else runs at full on-chip speed (~4.8 TB/s peak memory bandwidth).</div>`,
   setup(body, id){
     const flowWrap = el('div','col'); flowWrap.style.gap='16px'; flowWrap.style.width='100%'; flowWrap.style.maxWidth='880px';
 
@@ -1744,7 +1756,7 @@ P2.push({
 
     // Stage 1: Attention Engine
     const attBox = el('div','col'); attBox.style.cssText='width:100%;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
-    attBox.appendChild(el('div','caption','<b>Engine 1: Self-Attention (Words talk to each other)</b>'));
+    attBox.appendChild(el('div','caption','<b>Engine 1: Self-Attention (4096 hidden, 32-head dense stand-in)</b>'));
     const attGpuRow = el('div','row'); attGpuRow.style.gap='8px';
     const attGpuCards = [];
     for(let g=0;g<4;g++){
@@ -1771,7 +1783,7 @@ P2.push({
 
     // Stage 2: MLP Engine (Multi-Layer Perceptron)
     const mlpBox = el('div','col'); mlpBox.style.cssText='width:100%;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
-    mlpBox.appendChild(el('div','caption','<b>Engine 2: MLP (Multi-Layer Perceptron / Factual Memory)</b>'));
+    mlpBox.appendChild(el('div','caption','<b>Engine 2: MLP / Factual Memory (Illustrative dense MLP: 4096 -> 14336; real Qwen3 routes 8 of 128 MoE experts)</b>'));
     const mlpGpuRow = el('div','row'); mlpGpuRow.style.gap='8px';
     const mlpGpuCards = [];
     for(let g=0;g<4;g++){
@@ -1793,12 +1805,12 @@ P2.push({
     // Layer Anatomy Card
     const card = el('div','modelCard');
     card.style.cssText += ';width:100%;max-width:880px;padding:16px 20px;';
-    card.appendChild(el('h3','','Layer Anatomy: The 6 Primary Weight Matrices'));
+    card.appendChild(el('h3','','Layer Anatomy: The 7 Primary Weight Matrices per Layer'));
     const cardContent = el('div'); cardContent.style.cssText='display:flex;flex-direction:column;gap:12px;font-size:12.5px;';
     
     // Att section
     const sec1 = el('div'); sec1.style.cssText='border-bottom:1px solid var(--line2);padding-bottom:10px;';
-    sec1.appendChild(el('div','caption','<b>1. Self-Attention Block (Word-to-word relationships)</b>'));
+    sec1.appendChild(el('div','caption','<b>1. Self-Attention Block (4 Matrices: Word-to-word relationships)</b>'));
     const g1 = el('div'); g1.style.cssText='display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;align-items:center;margin-top:6px;';
     g1.innerHTML = `
       <code>W_Q, W_K, W_V</code>
@@ -1814,10 +1826,10 @@ P2.push({
 
     // MLP section
     const sec2 = el('div');
-    sec2.appendChild(el('div','caption','<b>2. MLP Block (Multi-Layer Perceptron / Factual knowledge)</b>'));
+    sec2.appendChild(el('div','caption','<b>2. SwiGLU MLP Block (3 Matrices: Factual knowledge expansion)</b>'));
     const g2 = el('div'); g2.style.cssText='display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;align-items:center;margin-top:6px;';
     g2.innerHTML = `
-      <code>W_up, W_gate</code>
+      <code>W_gate, W_up</code>
       <span>Expands vector width (4096 -> 14,336) to activate isolated factual concepts.</span>
       <span class="chip" style="border-color:var(--accent);color:var(--accent);font-size:9.5px;">Column Cut</span>
       <code>W_down</code>
@@ -2746,20 +2758,21 @@ P3.push({
   title:'Slicing the KV Cache: How 4 GPUs divide the notebook',
   text:`<h2>Partitioning the notebook across 4 GPUs</h2>
     <p>Because W_K and W_V are <b>Column-Cut</b>, each GPU calculates and stores <b>only its share of attention heads</b>.</p>
-    <p>If the model has 32 attention heads total:</p>
+    <p>In our <b>32-head dense stand-in</b> (official Qwen3 uses 64 Query heads and 4 KV heads with Grouped Query Attention):</p>
     <p>• <b>GPU 0:</b> Stores KV Cache for <b>Heads 0 to 7</b><br>
        • <b>GPU 1:</b> Stores KV Cache for <b>Heads 8 to 15</b><br>
        • <b>GPU 2:</b> Stores KV Cache for <b>Heads 16 to 23</b><br>
        • <b>GPU 3:</b> Stores KV Cache for <b>Heads 24 to 31</b></p>
+    <div class="note"><b>💡 GQA in Production:</b> In models with Grouped Query Attention (like Qwen3 with 4 KV heads), each GPU in a 4-way TP group holds <b>1 KV head</b> and 16 Query heads. The sharding principle is identical!</div>
     <div class="key"><b>4x Memory Footprint Reduction:</b> The total KV cache memory is cut into 4 equal slices. If a 128k context window requires 32 GB of KV cache, each GPU only needs to store <b>8 GB</b> in its VRAM!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. Total Model: 32 Attention Heads (32 GB total KV cache)');
+    const status = el('div','statusBadge','1. 32-Head Dense Stand-in (32 GB total KV cache sliceable 4 ways)');
     wrap.appendChild(status);
 
     // Host 32 heads overview
     const hostRow = el('div','col'); hostRow.style.alignItems='center'; hostRow.style.gap='4px';
-    hostRow.appendChild(el('div','caption','<b>Total 32 Attention Heads in Model:</b>'));
+    hostRow.appendChild(el('div','caption','<b>32-Head Dense Stand-in (Model Total):</b><br><small style="opacity:0.8;">(Official Qwen3 config: 64 Query heads, 4 KV heads with GQA)</small>'));
     const headsGrid = el('div','kvHeadRow');
     const headBoxes = [];
     for(let h=0; h<32; h++){
@@ -2771,7 +2784,7 @@ P3.push({
     hostRow.appendChild(headsGrid);
     wrap.appendChild(hostRow);
 
-    const splitTag = el('div','tag','↓↓ Column Cut splits 32 heads evenly: 8 heads per GPU ↓↓');
+    const splitTag = el('div','tag','↓↓ Column Cut splits 32 stand-in heads evenly: 8 heads per GPU ↓↓');
     splitTag.style.cssText += ';font-size:11px;padding:5px 14px;transition:all .3s;margin:0 auto;';
     wrap.appendChild(splitTag);
 
@@ -2780,7 +2793,7 @@ P3.push({
     const gpuCards = [];
     for(let g=0; g<4; g++){
       const inner = el('div','col'); inner.style.gap='6px';
-      inner.appendChild(el('div','caption',`<b>Heads ${g*8}-${g*8+7}</b> (8 heads)`));
+      inner.appendChild(el('div','caption',`<b>Heads ${g*8}-${g*8+7}</b> (8 heads/GPU)`));
       
       const kvGrid = el('div','kvTable');
       const sampleM = mtx(Array.from({length:3},()=>Array(4).fill('')), {colorOf:()=>g, small:true});
@@ -2994,10 +3007,10 @@ P3.push({
   text:`<h2>Why generating words is all about memory bandwidth</h2>
     <p>In Prefill, you process 512 tokens at once. Every weight matrix loaded from memory is multiplied 512 times. Compute cores are 100% saturated (<b>Compute-Bound</b>).</p>
     <p>In Decode, you process only <b>ONE token</b> (1x4096). Every weight is used <b>only once</b> and thrown away! To produce just 1 token, the GPU must sweep through all <b>470 GB of model weights</b> in memory.</p>
-    <p><b>The Math of the Memory Wall (NVIDIA H200 SXM @ 3.35 TB/s sustained):</b></p>
-    <p>• <b>1 GPU (3.35 TB/s bandwidth):</b> Reading 470 GB takes 470 / 3.35 ≈ 140 ms per token (~7 tokens/sec).<br>
-       • <b>4 GPUs (13.4 TB/s combined bandwidth):</b> Each GPU reads only 118 GB simultaneously: 118 / 3.35 ≈ 35 ms per token (<b>~28 tokens/sec</b>).</p>
-    <div class="key"><b>The Big Takeaway:</b> Tensor Parallelism speeds up Decode by <b>~4x</b> not because the math is heavy, but because <b>4 GPUs aggregate 4x total memory bandwidth</b> (13.4 TB/s) to break through the Memory Wall!</div>`,
+    <p><b>The Math of the Memory Wall (NVIDIA H200 SXM @ 4.8 TB/s peak HBM3e):</b></p>
+    <p>• <b>1 GPU (4.8 TB/s peak bandwidth):</b> Reading 470 GB takes 470 / 4.8 ≈ 98 ms per token (~10 tokens/sec).<br>
+       • <b>4 GPUs (19.2 TB/s aggregate peak bandwidth):</b> Each GPU reads only 118 GB simultaneously: 118 / 4.8 ≈ 25 ms per token (<b>~40 tokens/sec</b>).</p>
+    <div class="key"><b>The Big Takeaway:</b> Tensor Parallelism speeds up Decode by <b>~4x</b> not because the math is heavy, but because <b>4 GPUs aggregate 4x total memory bandwidth</b> (19.2 TB/s) to break through the Memory Wall!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='24px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
     
@@ -3013,8 +3026,8 @@ P3.push({
       return {c, t, timer, stream};
     }
 
-    const l1 = makeLane('1 GPU (3.35 TB/s memory bandwidth): Reads 470 GB weights sequentially');
-    const l4 = makeLane('4 GPUs (13.4 TB/s aggregated bandwidth): Each reads 118 GB in parallel');
+    const l1 = makeLane('1 GPU (4.8 TB/s peak HBM3e bandwidth): Reads 470 GB weights sequentially');
+    const l4 = makeLane('4 GPUs (19.2 TB/s aggregate peak bandwidth): Each reads 118 GB in parallel');
     wrap.appendChild(l1.c); wrap.appendChild(l4.c);
 
     const f1 = el('div','raceFill'); f1.style.background='var(--accent)'; l1.t.appendChild(f1);
@@ -3042,8 +3055,8 @@ P3.push({
         const count4 = Math.floor(p4 * words.length);
         const count1 = Math.floor(p1 * words.length);
 
-        l4.timer.innerHTML = `tokens generated: <b>${count4}</b> / ${words.length} words (<b>~28 tok/s</b>)`;
-        l1.timer.innerHTML = `tokens generated: <b>${count1}</b> / ${words.length} words (~7 tok/s)`;
+        l4.timer.innerHTML = `tokens generated: <b>${count4}</b> / ${words.length} words (<b>~40 tok/s</b>)`;
+        l1.timer.innerHTML = `tokens generated: <b>${count1}</b> / ${words.length} words (~10 tok/s)`;
 
         l4.stream.innerHTML = '';
         words.slice(0, count4).forEach(w=>l4.stream.appendChild(el('div','tokenPill', w)));
@@ -3054,7 +3067,7 @@ P3.push({
         if(p4 >= 1 && p1 >= 1){
           clearInterval(iv);
           res.innerHTML = `
-            <b>Decode Speedup Payoff:</b> 4× NVIDIA H200 SXM GPUs generate text <b>~4x faster</b> (28 tok/s vs 7 tok/s) by combining 4 independent memory buses (13.4 TB/s sustained bandwidth) to break through the Memory Wall!
+            <b>Decode Speedup Payoff:</b> 4× NVIDIA H200 SXM GPUs generate text <b>~4x faster</b> (40 tok/s vs 10 tok/s) by combining 4 independent memory buses (19.2 TB/s aggregate peak bandwidth) to break through the Memory Wall!
             <div class="modelCard" style="margin-top:20px;text-align:center;border-color:var(--accent);box-shadow:0 0 16px rgba(168,64,26,.15);">
               <h3 style="color:var(--accent);margin-bottom:8px;font-size:20px;">🎉 Simulation Complete!</h3>
               <p style="font-size:13px;color:var(--text);margin-bottom:14px;line-height:1.6;">You have explored the full journey of distributed LLM inference: from splitting 470 GB weights across 4 GPUs, to zero-delay column/row layer pairings, 2 NVLink syncs, and breaking through the memory bandwidth wall with the KV Cache.</p>
