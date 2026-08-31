@@ -2137,17 +2137,29 @@ P3.push({
     const canvas = el('div','col'); canvas.style.gap='0px'; canvas.style.width='100%';
 
     function makePassRow(passNum, inRows, inToks, outRows, outToks, newTok, macs, latencyMs){
-      const row = el('div','row'); row.style.cssText='width:100%;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--line2);border-radius:2px;background:var(--panel);opacity:0.25;transition:all .4s;';
+      const row = el('div','row'); row.style.cssText='width:100%;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--line2);border-radius:2px;background:var(--panel);opacity:0.25;transition:all .4s;';
       
-      // Input Matrix
-      const inBox = el('div','col'); inBox.style.alignItems='center'; inBox.style.gap='2px';
+      // Input Matrix with row labels
+      const inBox = el('div','col'); inBox.style.alignItems='center'; inBox.style.gap='4px';
       inBox.appendChild(el('div','caption',`<b>Pass ${passNum} Input (${inRows}x8)</b>`));
-      const inM = mtx(Array.from({length:inRows},()=>Array(8).fill('')), {small:true});
-      inM.querySelectorAll('.cell').forEach(paintInk);
+      
+      const inM = el('div','col'); inM.style.gap='2px';
+      for(let r=0; r<inRows; r++){
+        const rWrap = el('div','row'); rWrap.style.cssText='align-items:center;gap:6px;';
+        const rLbl = el('div','caption', inToks[r]);
+        rLbl.style.cssText='width:38px;text-align:right;font-size:10px;font-family:monospace;opacity:0.9;';
+        rWrap.appendChild(rLbl);
+        
+        const rCells = el('div','row'); rCells.style.gap='2px';
+        for(let c=0; c<8; c++){
+          const cell = el('div','cell small','');
+          paintInk(cell);
+          rCells.appendChild(cell);
+        }
+        rWrap.appendChild(rCells);
+        inM.appendChild(rWrap);
+      }
       inBox.appendChild(inM);
-      const inLabels = el('div','caption', inToks.join(' '));
-      inLabels.style.fontSize='10px'; inLabels.style.opacity='0.8';
-      inBox.appendChild(inLabels);
       row.appendChild(inBox);
 
       // 94 Layers Block + Growing Latency Meter
@@ -2173,23 +2185,33 @@ P3.push({
       midCol.appendChild(emitBadge);
       row.appendChild(midCol);
 
-      // Output Matrix (Updated Sequence)
-      const outBox = el('div','col'); outBox.style.alignItems='center'; outBox.style.gap='2px';
+      // Output Matrix with row labels (new token row highlighted)
+      const outBox = el('div','col'); outBox.style.alignItems='center'; outBox.style.gap='4px';
       outBox.appendChild(el('div','caption',`<b>Output (${outRows}x8)</b>`));
-      const outM = mtx(Array.from({length:outRows},()=>Array(8).fill('')), {small:true});
-      const cells = outM.querySelectorAll('.cell');
-      cells.forEach((c, idx)=>{
-        const r = Math.floor(idx / 8);
-        if(r === outRows - 1){
-          c.style.borderColor='var(--accent)'; c.style.color='var(--accent)';
-        } else {
-          paintInk(c);
+      
+      const outM = el('div','col'); outM.style.gap='2px';
+      for(let r=0; r<outRows; r++){
+        const isNew = (r === outRows - 1);
+        const rWrap = el('div','row'); rWrap.style.cssText='align-items:center;gap:6px;';
+        const rLbl = el('div','caption', outToks[r]);
+        rLbl.style.cssText=`width:38px;text-align:right;font-size:10px;font-family:monospace;font-weight:${isNew?'bold':'normal'};color:${isNew?'var(--accent)':'inherit'};`;
+        rWrap.appendChild(rLbl);
+        
+        const rCells = el('div','row'); rCells.style.gap='2px';
+        for(let c=0; c<8; c++){
+          const cell = el('div','cell small','');
+          if(isNew){
+            cell.style.borderColor='var(--accent)';
+            cell.style.color='var(--accent)';
+          } else {
+            paintInk(cell);
+          }
+          rCells.appendChild(cell);
         }
-      });
+        rWrap.appendChild(rCells);
+        outM.appendChild(rWrap);
+      }
       outBox.appendChild(outM);
-      const outLabels = el('div','caption', `${outToks.slice(0,-1).join(' ')} <b style="color:var(--accent);">+ "${newTok}"</b>`);
-      outLabels.style.fontSize='10px';
-      outBox.appendChild(outLabels);
       row.appendChild(outBox);
 
       return {row, inBox, layerBadge, pfill, timeTag, emitBadge, outBox, inM, outM, latencyMs, macs};
