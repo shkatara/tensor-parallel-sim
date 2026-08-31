@@ -1047,7 +1047,8 @@ P2.push({
   text:`<h2>The full-size matmul: All tokens at once</h2>
     <p>The input is the full 3x8 block. Multiplying <code>(3x8)·(8x8)</code> is nothing more than <b>three independent</b> <code>(1x8)·(8x8)</code> products sharing the same W: the "cat" row never touches the "The" row's arithmetic.</p>
     <p>Per token row: 8 columns x 8 = 64 multiply-adds. Three rows -> <b>192 total multiply-adds</b>, all computed on one GPU.</p>
-    <div class="note">Remember this 3x8 output: our sharded multi-GPU versions must reproduce <b>every cell</b> of it exactly.</div>`,
+    <div class="note"><b>💡 What is a Multiply-Add (MAC)?</b> Every matrix dot product computes terms like <code>(x1·w1) + (x2·w2) + ...</code>. Each term requires <b>1 multiplication + 1 addition</b> into a running sum. GPUs execute this as one atomic <b>Multiply-Accumulate (MAC)</b> instruction. 192 multiply-adds = 192 math steps.</div>
+    <div class="key">Remember this 3x8 output: our sharded multi-GPU versions must reproduce <b>every cell</b> of it exactly.</div>`,
   setup(body, id){
     const row = el('div','row');
     const colL = el('div','col');
@@ -1108,15 +1109,15 @@ P2.push({
     const bx = mtx(E,{small:true});
     bx.querySelectorAll('.cell').forEach(paintInk);
     bc.appendChild(bx);
-    bc.appendChild(el('div','caption','the FULL 3x8 block (every token) is broadcast to all 4 GPUs ↓'));
+    bc.appendChild(el('div','caption','X (3x8): identical copy sent to all 4 GPUs'));
     body.appendChild(bc);
-    const row = el('div','row'); row.style.marginTop='14px';
+    const row = el('div','row'); row.style.marginTop='22px';
     const parts=[];
     for(let g=0;g<4;g++){
       const inner = el('div','col');
-      const xm = mtx(E.map(()=>Array(8).fill('')),{small:true});
+      const xm = mtx(E.map(r=>r.map(()=>'')),{small:true});
       inner.appendChild(xm);
-      inner.appendChild(el('div','caption','X copy (3x8)'));
+      inner.appendChild(el('div','caption','local X (3x8)'));
       inner.appendChild(el('div','plus','×'));
       const opRow = el('div','row'); opRow.style.cssText='gap:8px;align-items:center;';
       const shard = Array.from({length:8},(_,r)=>[W[r][2*g], W[r][2*g+1]]);
@@ -1132,7 +1133,7 @@ P2.push({
       tileCol.appendChild(el('div','caption',`3x2 tile<br>(cols ${2*g}-${2*g+1})`));
       opRow.appendChild(tileCol);
       inner.appendChild(opRow);
-      const cnt = el('div','counter','<b>0</b>/48 MACs');
+      const cnt = el('div','counter','<b>0</b>/48 multiply-adds');
       inner.appendChild(cnt);
       const gpu = gpuBox(g, inner);
       row.appendChild(gpu);
@@ -1181,7 +1182,7 @@ P2.push({
                 yc.textContent = YM[t][2*p.g+0]; yc.classList.add('flash');
                 paint(yc, p.g);
               }
-              p.cnt.innerHTML = `<b>24</b>/48 MACs`;
+              p.cnt.innerHTML = `<b>24</b>/48 multiply-adds`;
             });
             tf.style.width = '12.5%';
           }
@@ -1197,7 +1198,7 @@ P2.push({
                 yc.textContent = YM[t][2*p.g+1]; yc.classList.add('flash');
                 paint(yc, p.g);
               }
-              p.cnt.innerHTML = `<b>48</b>/48 MACs`;
+              p.cnt.innerHTML = `<b>48</b>/48 multiply-adds`;
             });
             tf.style.width = '25%';
           }
@@ -1443,7 +1444,7 @@ P2.push({
       const pm = mtx(E.map(()=>Array(8).fill('')),{small:true});
       inner.appendChild(pm);
       inner.appendChild(el('div','caption',`partial Y (3x8)`));
-      const cnt = el('div','counter','<b>0</b>/48 MACs');
+      const cnt = el('div','counter','<b>0</b>/48 multiply-adds');
       inner.appendChild(cnt);
 
       const bx = gpuBox(g, inner);
@@ -1472,7 +1473,7 @@ P2.push({
               p.xs.querySelectorAll('.cell').forEach(c=>{ c.textContent=''; c.style.background=''; c.style.borderColor=''; });
               p.sm.querySelectorAll('.cell').forEach(c=>{ c.textContent=''; c.style.background=''; c.style.borderColor=''; });
               p.pm.querySelectorAll('.cell').forEach(c=>{ c.textContent=''; c.style.background=''; c.style.borderColor=''; });
-              p.cnt.innerHTML = '<b>0</b>/48 MACs';
+              p.cnt.innerHTML = '<b>0</b>/48 multiply-adds';
               p.bx.classList.remove('active');
             });
           }
@@ -1550,7 +1551,7 @@ P2.push({
                   cell.textContent = rowPartialM[p.g][t][c];
                   paint(cell, p.g);
                 }
-                p.cnt.innerHTML = `<b>${(c+1)*6}</b>/48 MACs`;
+                p.cnt.innerHTML = `<b>${(c+1)*6}</b>/48 multiply-adds`;
               });
               await sleep(120);
             }
@@ -2168,7 +2169,7 @@ P3.push({
       // 94 Layers Block + Growing Latency Meter
       const midCol = el('div','col'); midCol.style.alignItems='center'; midCol.style.gap='4px';
       const arrow1 = el('div','eq','→');
-      const layerBadge = el('div','nvlinkMeshBadge',`94 Layers (${macs} MACs)`);
+      const layerBadge = el('div','nvlinkMeshBadge',`94 Layers (${macs} multiply-adds)`);
       layerBadge.style.padding='6px 12px'; layerBadge.style.fontSize='11px';
       
       const pbar = el('div','membar'); pbar.style.width='110px'; pbar.style.height='6px';
@@ -2232,7 +2233,7 @@ P3.push({
       return wireWrap;
     }
 
-    // Pass 1: 3x8 -> 94 layers (24 MACs, 10 ms) -> 4x8
+    // Pass 1: 3x8 -> 94 layers (24 multiply-adds, 10 ms) -> 4x8
     const p1 = makePassRow(1, 3, ['"The"','"cat"','"sat"'], 4, ['"The"','"cat"','"sat"','"on"'], 'on', 24, 10);
     canvas.appendChild(p1.row);
 
@@ -2240,7 +2241,7 @@ P3.push({
     const w1 = makeWire('Loop 1: 4x8 output fed to Pass 2');
     canvas.appendChild(w1);
 
-    // Pass 2: 4x8 -> 94 layers (32 MACs, 14 ms) -> 5x8
+    // Pass 2: 4x8 -> 94 layers (32 multiply-adds, 14 ms) -> 5x8
     const p2 = makePassRow(2, 4, ['"The"','"cat"','"sat"','"on"'], 5, ['"The"','"cat"','"sat"','"on"','"the"'], 'the', 32, 14);
     canvas.appendChild(p2.row);
 
@@ -2248,7 +2249,7 @@ P3.push({
     const w2 = makeWire('Loop 2: 5x8 output fed to Pass 3');
     canvas.appendChild(w2);
 
-    // Pass 3: 5x8 -> 94 layers (40 MACs, 18 ms) -> 6x8
+    // Pass 3: 5x8 -> 94 layers (40 multiply-adds, 18 ms) -> 6x8
     const p3 = makePassRow(3, 5, ['"The"','"cat"','"sat"','"on"','"the"'], 6, ['"The"','"cat"','"sat"','"on"','"the"','"mat"'], 'mat', 40, 18);
     canvas.appendChild(p3.row);
 
@@ -2321,7 +2322,7 @@ P3.push({
         if(!await waitStep(300)) continue;
 
         // Step 1: Pass 1 executes (3x8 -> 10 ms -> emits "on" -> 4x8)
-        status.textContent = 'Pass 1: Input 3x8 matrix -> 94 Layers (24 MACs, 10 ms) -> Emits "on" -> Output is 4x8 matrix';
+        status.textContent = 'Pass 1: Input 3x8 matrix -> 94 Layers (24 multiply-adds, 10 ms) -> Emits "on" -> Output is 4x8 matrix';
         status.classList.remove('active');
         p1.row.style.opacity='1'; p1.row.style.borderColor='var(--accent)';
         p1.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
@@ -2341,7 +2342,7 @@ P3.push({
         if(!await waitStep(800)) continue;
 
         // Step 3: Pass 2 executes (4x8 -> 14 ms -> emits "the" -> 5x8)
-        status.textContent = 'Pass 2: Input is 4x8 matrix -> 94 Layers (32 MACs, 14 ms latency increases!) -> Emits "the"';
+        status.textContent = 'Pass 2: Input is 4x8 matrix -> 94 Layers (32 multiply-adds, 14 ms latency increases!) -> Emits "the"';
         p2.row.style.opacity='1'; p2.row.style.borderColor='var(--accent)';
         p2.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
         if(!await waitStep(500)) continue;
@@ -2359,7 +2360,7 @@ P3.push({
         if(!await waitStep(800)) continue;
 
         // Step 5: Pass 3 executes (5x8 -> 18 ms -> emits "mat" -> 6x8)
-        status.textContent = 'Pass 3: Input is 5x8 matrix -> 94 Layers (40 MACs, 18 ms latency even higher!) -> Emits "mat"';
+        status.textContent = 'Pass 3: Input is 5x8 matrix -> 94 Layers (40 multiply-adds, 18 ms latency even higher!) -> Emits "mat"';
         p3.row.style.opacity='1'; p3.row.style.borderColor='var(--accent)';
         p3.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
         if(!await waitStep(500)) continue;
@@ -2383,16 +2384,16 @@ P3.push({
   title:'The Growing Matrix Bottleneck: Why generation gets slower on every word',
   text:`<h2>The Problem: Re-calculating the past on every single word</h2>
     <p>Because the input matrix grows by 1 row on every iteration of the autoregressive loop, the <b>compute and time required per step increases continuously</b>:</p>
-    <p>• <b>Step 1 (Emit "on"):</b> Re-multiplies 3 tokens through 94 layers -> <b>24 MACs</b> (10 ms)<br>
-       • <b>Step 2 (Emit "the"):</b> Re-multiplies 4 tokens through 94 layers -> <b>32 MACs</b> (13 ms)<br>
-       • <b>Step 3 (Emit "mat"):</b> Re-multiplies 5 tokens through 94 layers -> <b>40 MACs</b> (17 ms)<br>
-       • <b>Step 4 (Emit "."):</b> Re-multiplies 6 tokens through 94 layers -> <b>48 MACs</b> (20 ms)</p>
-    <p><b>By Token 100:</b> The GPU must re-multiply 103 tokens through 94 layers (<b>824 MACs per token!</b>).</p>
+    <p>• <b>Step 1 (Emit "on"):</b> Re-multiplies 3 tokens through 94 layers -> <b>24 multiply-adds</b> (10 ms)<br>
+       • <b>Step 2 (Emit "the"):</b> Re-multiplies 4 tokens through 94 layers -> <b>32 multiply-adds</b> (13 ms)<br>
+       • <b>Step 3 (Emit "mat"):</b> Re-multiplies 5 tokens through 94 layers -> <b>40 multiply-adds</b> (17 ms)<br>
+       • <b>Step 4 (Emit "."):</b> Re-multiplies 6 tokens through 94 layers -> <b>48 multiply-adds</b> (20 ms)</p>
+    <p><b>By Token 100:</b> The GPU must re-multiply 103 tokens through 94 layers (<b>824 multiply-adds per token!</b>).</p>
     <div class="note"><b>💡 The Math Nuance:</b> Without a cache, re-projecting past tokens causes a quadratic O(N²) compute explosion. In Step 3.4, you will see how the KV Cache keeps projection matrix math strictly constant at 1x4096 per token (O(1)). Attention dot products still read the expanding past history (O(N)), but 99.9% of redundant matrix multiplications are eliminated!</div>
     <div class="key"><b>Quadratic O(N²) Explosion:</b> Generating a 1,000-token answer naively requires <b>503,500 token matmuls</b>! 99.9% of GPU compute is wasted re-calculating past tokens whose values never change.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. Step 1: Input has 3 tokens -> Compute: 24 MACs (10 ms latency)');
+    const status = el('div','statusBadge','1. Step 1: Input has 3 tokens -> Compute: 24 multiply-adds (10 ms latency)');
     wrap.appendChild(status);
 
     const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
@@ -2412,10 +2413,10 @@ P3.push({
     const timeFill = el('div'); timeBar.appendChild(timeFill);
     meterBox.appendChild(timeBar);
 
-    const curCost = el('div','caption','Step Math: <b>24</b> MACs · Step Latency: <b>10 ms</b>');
+    const curCost = el('div','caption','Step Math: <b>24</b> multiply-adds · Step Latency: <b>10 ms</b>');
     meterBox.appendChild(curCost);
 
-    const totalCost = el('div','counter','Cumulative Wasted Math: <b>24</b> MACs');
+    const totalCost = el('div','counter','Cumulative Wasted Math: <b>24</b> multiply-adds');
     meterBox.appendChild(totalCost);
 
     const warnTag = el('div','tag','🔴 BOTTLENECK: Each new token takes longer than the previous one!');
@@ -2447,15 +2448,15 @@ P3.push({
           delay: 1400,
           run: async () => {
             const d = stepsData[0];
-            status.textContent = `Step 1: 3 tokens in input matrix -> 24 MACs (${d.ms} ms)`;
+            status.textContent = `Step 1: 3 tokens in input matrix -> 24 multiply-adds (${d.ms} ms)`;
             status.classList.remove('active');
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
             timeFill.style.width = d.pct;
             timeFill.style.background = 'var(--accent)';
-            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
-            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs`;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> multiply-adds · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> multiply-adds`;
             check.innerHTML = '';
           }
         },
@@ -2464,14 +2465,14 @@ P3.push({
           delay: 1400,
           run: async () => {
             const d = stepsData[1];
-            status.textContent = `Step 2: 4 tokens in input matrix -> 32 MACs (${d.ms} ms) -> Time per token increases!`;
+            status.textContent = `Step 2: 4 tokens in input matrix -> 32 multiply-adds (${d.ms} ms) -> Time per token increases!`;
             status.classList.add('active');
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
             timeFill.style.width = d.pct;
-            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
-            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs`;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> multiply-adds · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> multiply-adds`;
           }
         },
         {
@@ -2479,13 +2480,13 @@ P3.push({
           delay: 1400,
           run: async () => {
             const d = stepsData[2];
-            status.textContent = `Step 3: 5 tokens in input matrix -> 40 MACs (${d.ms} ms) -> Input matrix is visibly taller`;
+            status.textContent = `Step 3: 5 tokens in input matrix -> 40 multiply-adds (${d.ms} ms) -> Input matrix is visibly taller`;
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
             timeFill.style.width = d.pct;
-            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
-            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs`;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> multiply-adds · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> multiply-adds`;
           }
         },
         {
@@ -2493,13 +2494,13 @@ P3.push({
           delay: 1400,
           run: async () => {
             const d = stepsData[3];
-            status.textContent = `Step 4: 6 tokens -> 48 MACs (${d.ms} ms). Total wasted math exploded to 144 MACs!`;
+            status.textContent = `Step 4: 6 tokens -> 48 multiply-adds (${d.ms} ms). Total wasted math exploded to 144 multiply-adds!`;
             inHolder.innerHTML = '';
             inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
             inHolder.querySelectorAll('.cell').forEach(paintInk);
             timeFill.style.width = d.pct;
-            curCost.innerHTML = `Step Math: <b>${d.macs}</b> MACs · Step Latency: <b>${d.ms} ms</b>`;
-            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> MACs (O(N²) quadratic bottleneck)`;
+            curCost.innerHTML = `Step Math: <b>${d.macs}</b> multiply-adds · Step Latency: <b>${d.ms} ms</b>`;
+            totalCost.innerHTML = `Cumulative Wasted Math: <b>${d.cumMacs}</b> multiply-adds (O(N²) quadratic bottleneck)`;
             check.innerHTML = `Without memory, generation grinds to a crawl as sequence length grows <span class="okmark">⚠️</span>`;
             status.classList.remove('active');
           }
@@ -2619,11 +2620,11 @@ P3.push({
   text:`<h2>Only 1 vector enters the 94 layers</h2>
     <p>Now watch how the autoregressive loop runs with the KV Cache in place:</p>
     <p>When generating Token 2 (word: "the"), instead of feeding a 4-token matrix into the 94 layers, the model feeds <b>ONLY the single 1st token vector ("on", 1x4096)</b>!</p>
-    <p>• <b>Step 1 (Emit "on"):</b> Input "sat" (1x8) -> <b>8 MACs</b> (reads 3 cached notes in RAM)<br>
-       • <b>Step 2 (Emit "the"):</b> Input "on" (1x8) -> <b>8 MACs</b> (reads 4 cached notes in RAM)<br>
-       • <b>Step 3 (Emit "mat"):</b> Input "the" (1x8) -> <b>8 MACs</b> (reads 5 cached notes in RAM)<br>
-       • <b>Step 4 (Emit "."):</b> Input "mat" (1x8) -> <b>8 MACs</b> (reads 6 cached notes in RAM)</p>
-    <div class="key"><b>Flat Constant Projection Math:</b> Total projection math needed is 8 + 8 + 8 + 8 = <b>32 MACs</b> (slashed from 144 MACs). The input to all 94 layers is <b>always strictly 1x4096</b>, keeping projection compute strictly flat per step!</div>`,
+    <p>• <b>Step 1 (Emit "on"):</b> Input "sat" (1x8) -> <b>8 multiply-adds</b> (reads 3 cached notes in RAM)<br>
+       • <b>Step 2 (Emit "the"):</b> Input "on" (1x8) -> <b>8 multiply-adds</b> (reads 4 cached notes in RAM)<br>
+       • <b>Step 3 (Emit "mat"):</b> Input "the" (1x8) -> <b>8 multiply-adds</b> (reads 5 cached notes in RAM)<br>
+       • <b>Step 4 (Emit "."):</b> Input "mat" (1x8) -> <b>8 multiply-adds</b> (reads 6 cached notes in RAM)</p>
+    <div class="key"><b>Flat Constant Projection Math:</b> Total projection math needed is 8 + 8 + 8 + 8 = <b>32 multiply-adds</b> (slashed from 144 multiply-adds). The input to all 94 layers is <b>always strictly 1x4096</b>, keeping projection compute strictly flat per step!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
     const status = el('div','statusBadge','1. KV Cache Ready: Past 3 tokens cached in RAM. Only 1 vector enters 94 layers!');
@@ -2647,14 +2648,14 @@ P3.push({
     layerBox.appendChild(el('div','caption','<b>94 Layers Compute: STRICTLY 1 Vector (1x8)</b>'));
     const inHolder = el('div'); inHolder.style.margin='auto 0';
     layerBox.appendChild(inHolder);
-    const costTag = el('div','tag','Flat Constant Math: Exactly 8 MACs per step');
+    const costTag = el('div','tag','Flat Constant Math: Exactly 8 multiply-adds per step');
     costTag.style.cssText += ';font-size:11px;padding:4px 10px;border-color:var(--ok);color:var(--ok);background:var(--okWash);';
     layerBox.appendChild(costTag);
     compRow.appendChild(layerBox);
 
     wrap.appendChild(compRow);
 
-    const savingsTracker = el('div','counter','Step Math: <b>8</b> MACs · Cumulative Math: <b>8</b> MACs (vs 24 without cache)');
+    const savingsTracker = el('div','counter','Step Math: <b>8</b> multiply-adds · Cumulative Math: <b>8</b> multiply-adds (vs 24 without cache)');
     wrap.appendChild(savingsTracker);
 
     const check = el('div','caption','');
@@ -2679,7 +2680,7 @@ P3.push({
           delay: 1500,
           run: async () => {
             const d = stepsData[0];
-            status.textContent = `Step 1: Input "sat" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 MACs -> Emits "on"`;
+            status.textContent = `Step 1: Input "sat" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 multiply-adds -> Emits "on"`;
             status.classList.remove('active');
             nbHolder.innerHTML = '';
             nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
@@ -2689,7 +2690,7 @@ P3.push({
             const vm = mtx([[ '1','2','0','1','2','1','1','0' ]], {small:true});
             vm.querySelectorAll('.cell').forEach(c=>{ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; });
             inHolder.appendChild(vm);
-            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> multiply-adds · Cumulative Math: <b>${d.cumMac}</b> multiply-adds (vs ${d.cumNoCache} multiply-adds without cache)`;
             check.innerHTML = '';
           }
         },
@@ -2698,13 +2699,13 @@ P3.push({
           delay: 1500,
           run: async () => {
             const d = stepsData[1];
-            status.textContent = `Step 2: Input "on" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 MACs -> Emits "the"`;
+            status.textContent = `Step 2: Input "on" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 multiply-adds -> Emits "the"`;
             status.classList.add('active');
             nbHolder.innerHTML = '';
             nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
             nbHolder.querySelectorAll('.cell').forEach(paintInk);
             nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
-            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> multiply-adds · Cumulative Math: <b>${d.cumMac}</b> multiply-adds (vs ${d.cumNoCache} multiply-adds without cache)`;
           }
         },
         {
@@ -2712,12 +2713,12 @@ P3.push({
           delay: 1500,
           run: async () => {
             const d = stepsData[2];
-            status.textContent = `Step 3: Input "the" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 MACs -> Emits "mat"`;
+            status.textContent = `Step 3: Input "the" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 multiply-adds -> Emits "mat"`;
             nbHolder.innerHTML = '';
             nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
             nbHolder.querySelectorAll('.cell').forEach(paintInk);
             nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
-            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> multiply-adds · Cumulative Math: <b>${d.cumMac}</b> multiply-adds (vs ${d.cumNoCache} multiply-adds without cache)`;
           }
         },
         {
@@ -2725,13 +2726,13 @@ P3.push({
           delay: 1500,
           run: async () => {
             const d = stepsData[3];
-            status.textContent = `Step 4: Input "mat" (1x8) -> 8 MACs -> Emits "."! Compute cost stayed flat at 8 MACs per step`;
+            status.textContent = `Step 4: Input "mat" (1x8) -> 8 multiply-adds -> Emits "."! Compute cost stayed flat at 8 multiply-adds per step`;
             nbHolder.innerHTML = '';
             nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
             nbHolder.querySelectorAll('.cell').forEach(paintInk);
             nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
-            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
-            check.innerHTML = `Compute cost was slashed from 144 MACs down to 32 MACs (4.5x faster)! Zero past tokens re-computed <span class="okmark">✓</span>`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> multiply-adds · Cumulative Math: <b>${d.cumMac}</b> multiply-adds (vs ${d.cumNoCache} multiply-adds without cache)`;
+            check.innerHTML = `Compute cost was slashed from 144 multiply-adds down to 32 multiply-adds (4.5x faster)! Zero past tokens re-computed <span class="okmark">✓</span>`;
             status.classList.remove('active');
           }
         }
