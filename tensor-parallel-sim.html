@@ -2106,41 +2106,46 @@ P2.push({
 /* ================= PART 3: DECODE & KV CACHE ================= */
 const P3 = [];
 
-/* ---- 3.1 Detective Notebook Analogy ---- */
+/* ---- 3.1 Detective Amnesia & KV Cache Solution ---- */
 P3.push({
-  title:'The Detective\'s Notebook: Why we need the KV Cache',
-  text:`<h2>The mystery of generating word 101</h2>
-    <p>Imagine a detective reading a 100-page mystery. To write page 101, the detective must understand all 100 previous pages.</p>
-    <p><b>Option A: WITHOUT a KV Cache (The Slow Disaster)</b><br>
-    To generate word 101, re-read all 100 previous words from scratch through the 94 layers of weight magnifying glasses (W). To generate word 102, re-read 101 words. This creates quadratic O(N²) slowdown where generation grinds to a halt.</p>
-    <p><b>Option B: WITH a KV Cache (The Smart Solution)</b><br>
-    During Prefill, as prompt words pass through W_K and W_V, the detective writes summary notes in a pocket notebook:</p>
-    <p>• <b>Key (K):</b> What is each word about? (Topic tag)<br>
-       • <b>Value (V):</b> What information does each word hold? (Clue content)</p>
-    <div class="key"><b>When word 101 arrives:</b> You multiply <b>ONLY word 100</b> through the 94 layers (1x4096). Word 100 writes its note, asks a question (<b>Query Q</b>), and glances at the notebook (<b>KV Cache</b> in RAM) in one fast read. Past words are <b>never re-computed!</b></div>`,
+  title:'The Recomputation Disaster: Why naive generation grinds to a halt',
+  text:`<h2>The Detective with Amnesia: The Recomputation Disaster</h2>
+    <p>Imagine you are a detective investigating a 100-page mystery case. You have just read pages 1 to 99, and now you want to write page 100.</p>
+    <p><b>The Disaster (Without a Memory):</b></p>
+    <p>To understand the context for page 100, you are forced to re-read pages 1 to 99 from the very beginning through your magnifying glass (W matrices). When you write page 101, you re-read all 100 pages. When you write page 500, you re-read all 499 pages!</p>
+    <p><b>Why this destroys generation speed:</b></p>
+    <p>• Generating 100 tokens means doing 1 + 2 + 3 + ... + 100 = <b>5,050 token multiplications</b>.<br>
+       • Generating 4,000 tokens means doing over <b>8 million token multiplications</b> (O(N²) quadratic explosion)!<br>
+       • 99.9% of GPU compute is wasted re-calculating identical past words over and over.</p>
+    <div class="key"><b>The Solution: The Detective's Pocket Notebook (KV Cache)</b><br>
+      Instead of re-reading old pages, take notes during Prefill:<br>
+      • <b>Key (K):</b> What is each word about? (Topic tag)<br>
+      • <b>Value (V):</b> What clue does it contain? (Information payload)<br>
+      When word 101 arrives: pass <b>ONLY the single newest vector</b> (1x4096) through the layers. It writes its note, asks its question (<b>Query Q</b>), and glances at the notebook in RAM. Past words are <b>never re-computed!</b></div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. Scenario: Prompt has 99 words already read. Generating Word 100.');
+    const status = el('div','statusBadge','1. The Disaster: Generating word 100 forces a full re-reading of all 99 previous words');
     wrap.appendChild(status);
 
     const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
 
-    // Option A: Without KV Cache
+    // Option A: The Recomputation Disaster
     const boxA = el('div','col'); boxA.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
-    boxA.appendChild(el('div','caption','<b>WITHOUT KV Cache: Slow Re-Reading</b>'));
-    const stackA = el('div','col'); stackA.style.gap='3px';
-    const tagA = el('div','tag','Re-computing 100 words through 94 layers (100 matmuls!)');
+    boxA.appendChild(el('div','caption','<b>WITHOUT KV Cache: Amnesia Disaster</b>'));
+    const stackA = el('div','col'); stackA.style.gap='4px';
+    const tagA = el('div','tag','O(N²) Explosion: Re-computing 100 tokens through 94 layers');
     tagA.style.cssText+=';font-size:10px;padding:4px 8px;border-color:var(--accent);color:var(--accent);';
     stackA.appendChild(tagA);
     const mtxA = mtx(Array.from({length:6},()=>Array(8).fill('')), {small:true});
     mtxA.querySelectorAll('.cell').forEach(c=>c.classList.add('dimmed'));
     stackA.appendChild(mtxA);
-    stackA.appendChild(el('div','caption','⋮ (all 100 words re-calculated) ⋮'));
+    const painCount = el('div','counter','Total token matmuls: <b>5,050</b> for 100 words');
+    stackA.appendChild(painCount);
     boxA.appendChild(stackA);
     compRow.appendChild(boxA);
 
-    // Option B: With KV Cache
-    const boxB = el('div','col'); boxB.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    // Option B: The Detective's Notebook
+    const boxB = el('div','col'); boxB.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;opacity:0.4;transition:opacity .4s;';
     boxB.appendChild(el('div','caption','<b>WITH KV Cache: Detective\'s Notebook</b>'));
     
     const nb = el('div','kvTable');
@@ -2148,13 +2153,13 @@ P3.push({
     const nbMtx = mtx(Array.from({length:3},()=>Array(8).fill('')), {small:true});
     nbMtx.querySelectorAll('.cell').forEach(paintInk);
     nb.appendChild(nbMtx);
-    nb.appendChild(el('div','caption','99 past words cached (0 re-compute)'));
+    nb.appendChild(el('div','caption','99 past words cached in memory (0 re-compute)'));
     boxB.appendChild(nb);
 
     const newTokCol = el('div','col'); newTokCol.style.alignItems='center';
     const newVec = mtx([[ '1','2','0','1','2','1','1','0' ]], {small:true});
     newVec.querySelectorAll('.cell').forEach(c=>{ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; });
-    newTokCol.appendChild(el('div','caption','<b>Only 1 new vector (1x4096) enters layer:</b>'));
+    newTokCol.appendChild(el('div','caption','<b>Only 1 vector (1x4096) enters 94 layers:</b>'));
     newTokCol.appendChild(newVec);
     boxB.appendChild(newTokCol);
 
@@ -2165,7 +2170,7 @@ P3.push({
     check.style.marginTop='4px';
     wrap.appendChild(check);
 
-    const foot = el('div','bigNote','With KV cache, compute cost per word stays constant at <b>1 token</b> instead of ballooning to 100, 500, or 4000 tokens!');
+    const foot = el('div','bigNote','With KV cache, compute cost per word drops from <b>100 matmuls to CONSTANT 1 matmul</b>! 99% of GPU compute is saved.');
     wrap.appendChild(foot);
     body.appendChild(wrap);
 
@@ -2174,14 +2179,16 @@ P3.push({
       id,
       phases: [
         {
-          name: '1. The Bottleneck',
+          name: '1. The Disaster',
           delay: 1400,
           run: async () => {
-            status.textContent = '1. Without KV cache: Every word forces a full re-read of all previous words';
+            status.textContent = '1. The Disaster: Amnesia forces GPU to re-compute all previous words on every new word';
             status.classList.remove('active');
             boxA.style.borderColor='var(--accent)';
+            boxB.style.opacity='0.4';
             boxB.style.borderColor='var(--line2)';
             mtxA.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            painCount.innerHTML = 'Total token matmuls: <b>5,050</b> for 100 words (O(N²) quadratic explosion)';
             check.innerHTML = '';
           }
         },
@@ -2189,20 +2196,21 @@ P3.push({
           name: '2. The Notebook',
           delay: 1500,
           run: async () => {
-            status.textContent = '2. With KV Cache: Past 99 words sit as notes in RAM. Only 1 new vector enters layer!';
+            status.textContent = '2. The Solution: Store Keys and Values of past words in memory as notes (KV Cache)';
             status.classList.add('active');
             boxA.style.borderColor='var(--line2)';
+            boxB.style.opacity='1';
             boxB.style.borderColor='var(--accent)';
             nbMtx.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-            newVec.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
           }
         },
         {
-          name: '3. Instant Read',
+          name: '3. Constant 1 Token',
           delay: 1500,
           run: async () => {
-            status.textContent = '3. Query vector does 1 quick dot product against notebook in RAM -> Next word emitted!';
-            check.innerHTML = `Word 100 generated instantly in 1 step! Zero past words re-calculated <span class="okmark">✓</span>`;
+            status.textContent = '3. The Cure: Only 1 new vector (1x4096) enters layers, reading the notebook in RAM';
+            newVec.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            check.innerHTML = `Compute cost drops from 100 matmuls to constant 1 matmul per word! Zero past words re-computed <span class="okmark">✓</span>`;
             status.classList.remove('active');
           }
         }
