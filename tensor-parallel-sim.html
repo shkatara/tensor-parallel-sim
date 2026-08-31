@@ -2113,15 +2113,30 @@ P3.push({
     <p>In Prefill, the model processed the prompt <code>X = ["The", "cat", "sat"]</code> (3x8 matrix) and generated the first new token: <code>"on"</code>.</p>
     <p>Because LLMs are <b>autoregressive</b>, they can only produce one token at a time. The newly emitted token is appended to the input matrix, making the total output a <b>4x8 matrix</b>.</p>
     <p>This 4x8 matrix loops back as the input to all 94 layers to produce the next token (<code>"the"</code>), creating a <b>5x8 matrix</b>, which loops again to produce <code>"mat"</code> (6x8 matrix).</p>
-    <div class="key"><b>The Growing Matrix Consequence:</b> Watch the continuous loop flow below. Follow the wire from right to left: on every single pass, the matrix entering the 94 layers is <b>1 row taller than the last pass</b>!</div>`,
+    <div class="key"><b>The Growing Time Bottleneck:</b> Notice the compute time on each pass. Because the input matrix is 1 row taller on every iteration, <b>each subsequent word takes longer to compute</b> than the previous one!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='14px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    
+    // Top Bar: Status + Controls
+    const topRow = el('div','row'); topRow.style.cssText='width:100%;justify-content:space-between;align-items:center;gap:10px;';
     const status = el('div','statusBadge','Autoregressive Loop: Tracing data flow across passes...');
-    wrap.appendChild(status);
+    status.style.flex = '1';
+    topRow.appendChild(status);
+
+    const ctrlRow = el('div','row'); ctrlRow.style.gap='6px';
+    const pauseBtn = el('button','btn','⏸ Pause');
+    pauseBtn.style.cssText += ';padding:4px 12px;font-size:11px;';
+    const restartBtn = el('button','btn','↺ Restart');
+    restartBtn.style.cssText += ';padding:4px 12px;font-size:11px;';
+    ctrlRow.appendChild(pauseBtn);
+    ctrlRow.appendChild(restartBtn);
+    topRow.appendChild(ctrlRow);
+
+    wrap.appendChild(topRow);
 
     const canvas = el('div','col'); canvas.style.gap='0px'; canvas.style.width='100%';
 
-    function makePassRow(passNum, inRows, inToks, outRows, outToks, newTok){
+    function makePassRow(passNum, inRows, inToks, outRows, outToks, newTok, macs, latencyMs){
       const row = el('div','row'); row.style.cssText='width:100%;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid var(--line2);border-radius:2px;background:var(--panel);opacity:0.25;transition:all .4s;';
       
       // Input Matrix
@@ -2135,15 +2150,26 @@ P3.push({
       inBox.appendChild(inLabels);
       row.appendChild(inBox);
 
-      // 94 Layers Block
+      // 94 Layers Block + Growing Latency Meter
       const midCol = el('div','col'); midCol.style.alignItems='center'; midCol.style.gap='4px';
       const arrow1 = el('div','eq','→');
-      const layerBadge = el('div','nvlinkMeshBadge','94 Layers');
-      layerBadge.style.padding='8px 14px'; layerBadge.style.fontSize='11px';
+      const layerBadge = el('div','nvlinkMeshBadge',`94 Layers (${macs} MACs)`);
+      layerBadge.style.padding='6px 12px'; layerBadge.style.fontSize='11px';
+      
+      const pbar = el('div','membar'); pbar.style.width='110px'; pbar.style.height='6px';
+      const pfill = el('div'); pfill.style.width='0%'; pfill.style.background='var(--accent)';
+      pbar.appendChild(pfill);
+
+      const timeTag = el('div','caption',`Time: <b>${latencyMs} ms</b>`);
+      timeTag.style.fontSize='10px';
+
       const emitBadge = el('div','tokOut',`Emits: "${newTok}"`);
       emitBadge.style.fontSize='10px'; emitBadge.style.padding='2px 8px'; emitBadge.style.opacity='0';
+      
       midCol.appendChild(arrow1);
       midCol.appendChild(layerBadge);
+      midCol.appendChild(pbar);
+      midCol.appendChild(timeTag);
       midCol.appendChild(emitBadge);
       row.appendChild(midCol);
 
@@ -2166,38 +2192,39 @@ P3.push({
       outBox.appendChild(outLabels);
       row.appendChild(outBox);
 
-      return {row, inBox, layerBadge, emitBadge, outBox, inM, outM};
+      return {row, inBox, layerBadge, pfill, timeTag, emitBadge, outBox, inM, outM, latencyMs, macs};
     }
 
-    function makeWire(){
-      const wireWrap = el('div'); wireWrap.style.cssText='width:100%;height:32px;position:relative;margin:2px 0;opacity:0.25;transition:opacity .4s;';
+    function makeWire(label){
+      const wireWrap = el('div','col'); wireWrap.style.cssText='width:100%;height:34px;position:relative;margin:2px 0;opacity:0.25;transition:opacity .4s;';
       wireWrap.innerHTML = `
-        <svg viewBox="0 0 100 32" preserveAspectRatio="none" style="width:100%;height:100%;display:block;overflow:visible;">
-          <path class="wirePath" d="M 85,2 L 85,16 L 15,16 L 15,30 L 22,30" fill="none" stroke="var(--ink)" stroke-width="1.8" stroke-dasharray="3,2" />
-          <polygon points="24,30 20,27 20,33" fill="var(--ink)" />
+        <svg viewBox="0 0 100 34" preserveAspectRatio="none" style="width:100%;height:100%;display:block;overflow:visible;">
+          <path class="wirePath" d="M 85,2 L 85,17 L 15,17 L 15,32 L 22,32" fill="none" stroke="var(--ink)" stroke-width="1.8" stroke-dasharray="3,2" />
+          <polygon points="24,32 20,29 20,35" fill="var(--ink)" />
+          <text x="50" y="14" fill="var(--ink)" font-size="3.5" font-family="monospace" text-anchor="middle" opacity="0.8">${label}</text>
         </svg>
       `;
       return wireWrap;
     }
 
-    // Pass 1: 3x8 -> 94 layers -> 4x8
-    const p1 = makePassRow(1, 3, ['"The"','"cat"','"sat"'], 4, ['"The"','"cat"','"sat"','"on"'], 'on');
+    // Pass 1: 3x8 -> 94 layers (24 MACs, 10 ms) -> 4x8
+    const p1 = makePassRow(1, 3, ['"The"','"cat"','"sat"'], 4, ['"The"','"cat"','"sat"','"on"'], 'on', 24, 10);
     canvas.appendChild(p1.row);
 
     // Wire 1: down -> left -> down -> right
-    const w1 = makeWire();
+    const w1 = makeWire('Loop 1: 4x8 output fed to Pass 2');
     canvas.appendChild(w1);
 
-    // Pass 2: 4x8 -> 94 layers -> 5x8
-    const p2 = makePassRow(2, 4, ['"The"','"cat"','"sat"','"on"'], 5, ['"The"','"cat"','"sat"','"on"','"the"'], 'the');
+    // Pass 2: 4x8 -> 94 layers (32 MACs, 14 ms) -> 5x8
+    const p2 = makePassRow(2, 4, ['"The"','"cat"','"sat"','"on"'], 5, ['"The"','"cat"','"sat"','"on"','"the"'], 'the', 32, 14);
     canvas.appendChild(p2.row);
 
     // Wire 2: down -> left -> down -> right
-    const w2 = makeWire();
+    const w2 = makeWire('Loop 2: 5x8 output fed to Pass 3');
     canvas.appendChild(w2);
 
-    // Pass 3: 5x8 -> 94 layers -> 6x8
-    const p3 = makePassRow(3, 5, ['"The"','"cat"','"sat"','"on"','"the"'], 6, ['"The"','"cat"','"sat"','"on"','"the"','"mat"'], 'mat');
+    // Pass 3: 5x8 -> 94 layers (40 MACs, 18 ms) -> 6x8
+    const p3 = makePassRow(3, 5, ['"The"','"cat"','"sat"','"on"','"the"'], 6, ['"The"','"cat"','"sat"','"on"','"the"','"mat"'], 'mat', 40, 18);
     canvas.appendChild(p3.row);
 
     wrap.appendChild(canvas);
@@ -2208,66 +2235,119 @@ P3.push({
 
     body.appendChild(wrap);
 
+    // Pause / Play state
+    let isPaused = false;
+    let restartSignal = false;
+
+    pauseBtn.onclick = () => {
+      isPaused = !isPaused;
+      pauseBtn.textContent = isPaused ? '▶ Play' : '⏸ Pause';
+      pauseBtn.style.borderColor = isPaused ? 'var(--accent)' : '';
+      pauseBtn.style.color = isPaused ? 'var(--accent)' : '';
+    };
+
+    restartBtn.onclick = () => {
+      restartSignal = true;
+      if(isPaused){
+        isPaused = false;
+        pauseBtn.textContent = '⏸ Pause';
+        pauseBtn.style.borderColor = '';
+        pauseBtn.style.color = '';
+      }
+    };
+
+    async function waitStep(ms){
+      const t0 = performance.now();
+      while(performance.now() - t0 < ms || isPaused){
+        if(!alive(id) || restartSignal) return false;
+        await sleep(40);
+      }
+      return alive(id) && !restartSignal;
+    }
+
+    async function animateProgress(pfill, durationMs){
+      const t0 = performance.now();
+      while(performance.now() - t0 < durationMs){
+        if(!alive(id) || restartSignal) return false;
+        if(!isPaused){
+          const p = Math.min((performance.now() - t0) / durationMs, 1);
+          pfill.style.width = (p * 100) + '%';
+        }
+        await sleep(30);
+      }
+      pfill.style.width = '100%';
+      return alive(id) && !restartSignal;
+    }
+
     // Continuous sequential waterfall animation
     (async()=>{
       while(alive(id)){
+        restartSignal = false;
+
         // Reset all
         [p1, p2, p3].forEach(p=>{
           p.row.style.opacity='0.25'; p.row.style.borderColor='var(--line2)';
           p.layerBadge.classList.remove('flash');
+          p.pfill.style.width='0%';
           p.emitBadge.style.opacity='0';
         });
         w1.style.opacity='0.25'; w2.style.opacity='0.25';
         check.innerHTML = '';
-        await sleep(300); if(!alive(id)) return;
+        if(!await waitStep(300)) continue;
 
-        // Step 1: Pass 1 executes (3x8 -> emits "on" -> 4x8)
-        status.textContent = 'Pass 1: Input is 3x8 matrix ("The","cat","sat") -> 94 Layers -> Emits "on" -> Output is 4x8 matrix';
+        // Step 1: Pass 1 executes (3x8 -> 10 ms -> emits "on" -> 4x8)
+        status.textContent = 'Pass 1: Input 3x8 matrix -> 94 Layers (24 MACs, 10 ms) -> Emits "on" -> Output is 4x8 matrix';
         status.classList.remove('active');
         p1.row.style.opacity='1'; p1.row.style.borderColor='var(--accent)';
         p1.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-        await sleep(600); if(!alive(id)) return;
+        if(!await waitStep(500)) continue;
+        
         p1.layerBadge.classList.add('flash');
-        await sleep(600); if(!alive(id)) return;
+        if(!await animateProgress(p1.pfill, 700)) continue;
+        
         p1.emitBadge.style.opacity='1'; p1.emitBadge.classList.add('flash');
         p1.outM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-        await sleep(1000); if(!alive(id)) return;
+        if(!await waitStep(900)) continue;
 
-        // Step 2: Wire 1 carries 4x8 matrix (down -> left -> down -> right)
+        // Step 2: Wire 1 carries 4x8 matrix
         status.textContent = 'Wire Loop 1: 4x8 matrix flows down -> left -> down -> right into Pass 2 input';
         status.classList.add('active');
         w1.style.opacity='1';
-        await sleep(900); if(!alive(id)) return;
+        if(!await waitStep(800)) continue;
 
-        // Step 3: Pass 2 executes (4x8 -> emits "the" -> 5x8)
-        status.textContent = 'Pass 2: Input is now 4x8 matrix -> 94 Layers -> Emits "the" -> Output is 5x8 matrix';
+        // Step 3: Pass 2 executes (4x8 -> 14 ms -> emits "the" -> 5x8)
+        status.textContent = 'Pass 2: Input is 4x8 matrix -> 94 Layers (32 MACs, 14 ms latency increases!) -> Emits "the"';
         p2.row.style.opacity='1'; p2.row.style.borderColor='var(--accent)';
         p2.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-        await sleep(600); if(!alive(id)) return;
+        if(!await waitStep(500)) continue;
+
         p2.layerBadge.classList.add('flash');
-        await sleep(600); if(!alive(id)) return;
+        if(!await animateProgress(p2.pfill, 1000)) continue;
+
         p2.emitBadge.style.opacity='1'; p2.emitBadge.classList.add('flash');
         p2.outM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-        await sleep(1000); if(!alive(id)) return;
+        if(!await waitStep(900)) continue;
 
-        // Step 4: Wire 2 carries 5x8 matrix (down -> left -> down -> right)
+        // Step 4: Wire 2 carries 5x8 matrix
         status.textContent = 'Wire Loop 2: 5x8 matrix flows down -> left -> down -> right into Pass 3 input';
         w2.style.opacity='1';
-        await sleep(900); if(!alive(id)) return;
+        if(!await waitStep(800)) continue;
 
-        // Step 5: Pass 3 executes (5x8 -> emits "mat" -> 6x8)
-        status.textContent = 'Pass 3: Input is now 5x8 matrix -> 94 Layers -> Emits "mat" -> Output is 6x8 matrix';
+        // Step 5: Pass 3 executes (5x8 -> 18 ms -> emits "mat" -> 6x8)
+        status.textContent = 'Pass 3: Input is 5x8 matrix -> 94 Layers (40 MACs, 18 ms latency even higher!) -> Emits "mat"';
         p3.row.style.opacity='1'; p3.row.style.borderColor='var(--accent)';
         p3.inM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-        await sleep(600); if(!alive(id)) return;
+        if(!await waitStep(500)) continue;
+
         p3.layerBadge.classList.add('flash');
-        await sleep(600); if(!alive(id)) return;
+        if(!await animateProgress(p3.pfill, 1300)) continue;
+
         p3.emitBadge.style.opacity='1'; p3.emitBadge.classList.add('flash');
         p3.outM.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
 
-        check.innerHTML = `Notice the input matrix growing on every pass: <b>3x8 -> 4x8 -> 5x8</b>! Every new word takes more math than the last <span class="okmark">✓</span>`;
+        check.innerHTML = `Notice the latency growing on each word: <b>10 ms -> 14 ms -> 18 ms</b>! As matrix height increases, generation slows down <span class="okmark">✓</span>`;
         status.classList.remove('active');
-        await sleep(3200);
+        if(!await waitStep(3200)) continue;
       }
     })();
   }
