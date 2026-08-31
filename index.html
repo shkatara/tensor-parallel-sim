@@ -2109,23 +2109,19 @@ const P3 = [];
 /* ---- 3.1 The Autoregressive Loop ---- */
 P3.push({
   title:'The Autoregressive Loop: How LLMs generate text token-by-token',
-  text:`<h2>One token at a time: The Autoregressive Loop</h2>
-    <p>In Prefill, the model processed the full prompt input <code>X = ["The", "cat", "sat"]</code> (3 tokens) and produced the <b>first generated token: "on"</b>.</p>
-    <p>How does the model produce subsequent words? LLMs are <b>autoregressive</b>: they can predict only <b>one token at a time</b>!</p>
-    <p>To generate each new word, the model takes the entire sequence generated so far and feeds it back into all 94 layers:</p>
-    <p>• <b>Iteration 1 (Emit "on"):</b> Input is [X] (3 tokens: "The","cat","sat") -> emits "on"<br>
-       • <b>Iteration 2 (Emit "the"):</b> Input is [X + "on"] (4 tokens) -> emits "the"<br>
-       • <b>Iteration 3 (Emit "mat"):</b> Input is [X + "on" + "the"] (5 tokens) -> emits "mat"<br>
-       • <b>Iteration 4 (Emit "."):</b> Input is [X + "on" + "the" + "mat"] (6 tokens) -> emits "."</p>
-    <div class="key"><b>The Growing Input Matrix:</b> Notice what happens on each loop. Because the model re-feeds all past tokens, the input matrix fed into the 94 layers becomes <b>1 row taller on every single iteration</b>!</div>`,
+  text:`<h2>Generating one token at a time: The Autoregressive Loop</h2>
+    <p>In Prefill, the model processed the prompt <code>X = ["The", "cat", "sat"]</code> and generated the first new token: <code>"on"</code>.</p>
+    <p>To produce subsequent words, LLMs cannot generate entire sentences in one step. They are <b>autoregressive</b>: they must predict text <b>one token at a time</b>.</p>
+    <p>After each word is emitted, it is appended to the sequence so far, and the entire updated sequence is fed back into all 94 layers to predict the next word.</p>
+    <div class="key"><b>The Growing Input Problem:</b> Watch the continuous loop below. Because each newly generated word is added to the sequence, the input matrix entering the 94 layers grows <b>one row taller on every single cycle</b>!</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. Iteration 1: Prompt [X] (3 tokens: "The","cat","sat") enters 94 layers -> emits "on"');
+    const status = el('div','statusBadge','Autoregressive Loop: Generating tokens one-by-one...');
     wrap.appendChild(status);
 
     // Sequence stream
     const seqCol = el('div','col');
-    seqCol.appendChild(el('div','caption','<b>Full Sequence fed into 94 layers (growing 1 word taller each iteration):</b>'));
+    seqCol.appendChild(el('div','caption','<b>Full Sequence fed into 94 layers (growing 1 word taller each cycle):</b>'));
     const stream = el('div','tokenStream');
     seqCol.appendChild(stream);
     wrap.appendChild(seqCol);
@@ -2137,6 +2133,8 @@ P3.push({
     inBox.appendChild(el('div','caption','Input Matrix to 94 Layers:'));
     const inHolder = el('div');
     inBox.appendChild(inHolder);
+    const sizeTag = el('div','caption','Matrix shape: <b>3 × 4096</b>');
+    inBox.appendChild(sizeTag);
     loopRow.appendChild(inBox);
 
     loopRow.appendChild(el('div','eq','→'));
@@ -2158,6 +2156,10 @@ P3.push({
 
     wrap.appendChild(loopRow);
 
+    const feedbackMsg = el('div','tag','⤹ Output token is appended to sequence -> Fed back into 94 layers as a taller matrix ⤹');
+    feedbackMsg.style.cssText += ';font-size:11px;padding:6px 14px;border-color:var(--accent);color:var(--accent);background:var(--warnWash);margin:0 auto;';
+    wrap.appendChild(feedbackMsg);
+
     const check = el('div','caption','');
     check.style.marginTop='4px';
     wrap.appendChild(check);
@@ -2171,74 +2173,39 @@ P3.push({
       {toks:['The','cat','sat','on','the','mat'], emit:'.', rows:6}
     ];
 
-    createStepper({
-      container: body,
-      id,
-      phases: [
-        {
-          name: 'Iteration 1: Emit "on"',
-          delay: 1500,
-          run: async () => {
-            const d = stepsData[0];
-            status.textContent = `Iteration 1: Input is [X] (${d.rows} tokens) -> 94 layers compute -> Emits 1st token "${d.emit}"`;
-            status.classList.remove('active');
-            stream.innerHTML = '';
-            d.toks.forEach(t=>stream.appendChild(el('div','tokenPill prompt', t)));
-            inHolder.innerHTML = '';
-            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
-            inHolder.querySelectorAll('.cell').forEach(paintInk);
-            outPill.textContent = `"${d.emit}"`;
-            outPill.style.opacity='1';
-            check.innerHTML = '';
-          }
-        },
-        {
-          name: 'Iteration 2: Emit "the"',
-          delay: 1500,
-          run: async () => {
-            const d = stepsData[1];
-            status.textContent = `Iteration 2: Input is now [X + "on"] (${d.rows} tokens) -> 94 layers compute -> Emits 2nd token "${d.emit}"`;
-            status.classList.add('active');
-            stream.innerHTML = '';
-            d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
-            inHolder.innerHTML = '';
-            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
-            inHolder.querySelectorAll('.cell').forEach(paintInk);
-            outPill.textContent = `"${d.emit}"`;
-          }
-        },
-        {
-          name: 'Iteration 3: Emit "mat"',
-          delay: 1500,
-          run: async () => {
-            const d = stepsData[2];
-            status.textContent = `Iteration 3: Input is now [X + "on" + "the"] (${d.rows} tokens) -> Matrix is 5 rows tall! -> Emits "${d.emit}"`;
-            stream.innerHTML = '';
-            d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
-            inHolder.innerHTML = '';
-            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
-            inHolder.querySelectorAll('.cell').forEach(paintInk);
-            outPill.textContent = `"${d.emit}"`;
-          }
-        },
-        {
-          name: 'Iteration 4: Emit "."',
-          delay: 1500,
-          run: async () => {
-            const d = stepsData[3];
-            status.textContent = `Iteration 4: Input is now 6 tokens tall -> Emits "${d.emit}". Sequence complete!`;
-            stream.innerHTML = '';
-            d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
-            inHolder.innerHTML = '';
-            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
-            inHolder.querySelectorAll('.cell').forEach(paintInk);
-            outPill.textContent = `"${d.emit}"`;
-            check.innerHTML = `This loop produces 1 token per iteration, but the input matrix gets 1 row taller each time <span class="okmark">✓</span>`;
-            status.classList.remove('active');
-          }
+    let curStep = 0;
+    (async()=>{
+      while(alive(id)){
+        const d = stepsData[curStep];
+        status.textContent = `Loop Cycle ${curStep+1}/4: Input sequence is ${d.rows} tokens -> Emits "${d.emit}" -> Appends to input matrix`;
+        status.classList.toggle('active', curStep>0);
+
+        stream.innerHTML = '';
+        d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
+
+        inHolder.innerHTML = '';
+        inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+        inHolder.querySelectorAll('.cell').forEach(paintInk);
+        sizeTag.innerHTML = `Matrix shape: <b>${d.rows} × 4096</b> (${d.rows} rows)`;
+
+        lCard.classList.add('flash');
+        outPill.textContent = `"${d.emit}"`;
+        outPill.style.opacity = '1';
+        outPill.classList.add('flash');
+
+        if(curStep === stepsData.length - 1){
+          check.innerHTML = `Full sentence generated! Notice how the input matrix grew from 3 rows to 6 rows <span class="okmark">✓</span>`;
+          await sleep(2400);
+          if(!alive(id)) return;
+          curStep = 0;
+        } else {
+          check.innerHTML = `Output "${d.emit}" feeds back into the layers as row ${d.rows+1}...`;
+          await sleep(1800);
+          if(!alive(id)) return;
+          curStep++;
         }
-      ]
-    });
+      }
+    })();
   }
 });
 
