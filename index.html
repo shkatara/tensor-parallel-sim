@@ -2106,111 +2106,131 @@ P2.push({
 /* ================= PART 3: DECODE & KV CACHE ================= */
 const P3 = [];
 
-/* ---- 3.1 Detective Amnesia & KV Cache Solution ---- */
+/* ---- 3.1 The Recomputation Disaster (Without KV Cache) ---- */
 P3.push({
-  title:'The Recomputation Disaster: Why naive generation grinds to a halt',
-  text:`<h2>The Detective with Amnesia: The Recomputation Disaster</h2>
-    <p>Imagine you are a detective investigating a 100-page mystery case. You have just read pages 1 to 99, and now you want to write page 100.</p>
-    <p><b>The Disaster (Without a Memory):</b></p>
-    <p>To understand the context for page 100, you are forced to re-read pages 1 to 99 from the very beginning through your magnifying glass (W matrices). When you write page 101, you re-read all 100 pages. When you write page 500, you re-read all 499 pages!</p>
-    <p><b>Why this destroys generation speed:</b></p>
-    <p>• Generating 100 tokens means doing 1 + 2 + 3 + ... + 100 = <b>5,050 token multiplications</b>.<br>
-       • Generating 4,000 tokens means doing over <b>8 million token multiplications</b> (O(N²) quadratic explosion)!<br>
-       • 99.9% of GPU compute is wasted re-calculating identical past words over and over.</p>
-    <div class="key"><b>The Solution: The Detective's Pocket Notebook (KV Cache)</b><br>
-      Instead of re-reading old pages, take notes during Prefill:<br>
-      • <b>Key (K):</b> What is each word about? (Topic tag)<br>
-      • <b>Value (V):</b> What clue does it contain? (Information payload)<br>
-      When word 101 arrives: pass <b>ONLY the single newest vector</b> (1x4096) through the layers. It writes its note, asks its question (<b>Query Q</b>), and glances at the notebook in RAM. Past words are <b>never re-computed!</b></div>`,
+  title:'The Recomputation Disaster: What happens without a memory',
+  text:`<h2>The Detective with Amnesia: What happens without KV Cache?</h2>
+    <p>Imagine generating a 4-word sentence token-by-token: <code>"on" -> "the" -> "mat" -> "."</code>.</p>
+    <p>If the GPU has <b>no memory (no KV Cache)</b>, it has amnesia! To generate each new word, it must re-feed <b>all past tokens from scratch</b> through all 94 layers of W weight matrices:</p>
+    <p>• <b>Step 1 (Emit "on"):</b> Re-multiplies 3 tokens ("The","cat","sat") -> <b>24 MACs</b><br>
+       • <b>Step 2 (Emit "the"):</b> Re-multiplies 4 tokens ("The","cat","sat","on") -> <b>32 MACs</b><br>
+       • <b>Step 3 (Emit "mat"):</b> Re-multiplies 5 tokens ("The","cat","sat","on","the") -> <b>40 MACs</b><br>
+       • <b>Step 4 (Emit "."):</b> Re-multiplies 6 tokens ("The","cat","sat","on","the","mat") -> <b>48 MACs</b></p>
+    <div class="key"><b>Total compute wasted:</b> 24 + 32 + 40 + 48 = <b>144 MACs</b>! For 1,000 tokens, this balloons to <b>over 500,000 redundant operations</b> (O(N²) quadratic disaster). 99.9% of GPU compute is wasted re-calculating the exact same past words.</div>`,
   setup(body, id){
     const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
-    const status = el('div','statusBadge','1. The Disaster: Generating word 100 forces a full re-reading of all 99 previous words');
+    const status = el('div','statusBadge','1. Step 1: Prompt has 3 tokens -> Multiplies 3x8 input by W -> 24 MACs');
     wrap.appendChild(status);
 
-    const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
+    // Current sequence stream
+    const seqCol = el('div','col');
+    seqCol.appendChild(el('div','caption','<b>Sequence fed into 94 layers on each step (growing larger!):</b>'));
+    const stream = el('div','tokenStream');
+    seqCol.appendChild(stream);
+    wrap.appendChild(seqCol);
 
-    // Option A: The Recomputation Disaster
-    const boxA = el('div','col'); boxA.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
-    boxA.appendChild(el('div','caption','<b>WITHOUT KV Cache: Amnesia Disaster</b>'));
-    const stackA = el('div','col'); stackA.style.gap='4px';
-    const tagA = el('div','tag','O(N²) Explosion: Re-computing 100 tokens through 94 layers');
-    tagA.style.cssText+=';font-size:10px;padding:4px 8px;border-color:var(--accent);color:var(--accent);';
-    stackA.appendChild(tagA);
-    const mtxA = mtx(Array.from({length:6},()=>Array(8).fill('')), {small:true});
-    mtxA.querySelectorAll('.cell').forEach(c=>c.classList.add('dimmed'));
-    stackA.appendChild(mtxA);
-    const painCount = el('div','counter','Total token matmuls: <b>5,050</b> for 100 words');
-    stackA.appendChild(painCount);
-    boxA.appendChild(stackA);
-    compRow.appendChild(boxA);
-
-    // Option B: The Detective's Notebook
-    const boxB = el('div','col'); boxB.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;opacity:0.4;transition:opacity .4s;';
-    boxB.appendChild(el('div','caption','<b>WITH KV Cache: Detective\'s Notebook</b>'));
+    // Dynamic multiplying stack
+    const stackRow = el('div','row'); stackRow.style.gap='16px'; stackRow.style.alignItems='center';
     
-    const nb = el('div','kvTable');
-    nb.appendChild(el('div','caption','<b>Pocket Notebook (KV Cache in RAM)</b>'));
-    const nbMtx = mtx(Array.from({length:3},()=>Array(8).fill('')), {small:true});
-    nbMtx.querySelectorAll('.cell').forEach(paintInk);
-    nb.appendChild(nbMtx);
-    nb.appendChild(el('div','caption','99 past words cached in memory (0 re-compute)'));
-    boxB.appendChild(nb);
+    const inBox = el('div','col'); inBox.style.alignItems='center';
+    inBox.appendChild(el('div','caption','Input Matrix fed to 94 layers:'));
+    const inHolder = el('div');
+    inBox.appendChild(inHolder);
+    stackRow.appendChild(inBox);
 
-    const newTokCol = el('div','col'); newTokCol.style.alignItems='center';
-    const newVec = mtx([[ '1','2','0','1','2','1','1','0' ]], {small:true});
-    newVec.querySelectorAll('.cell').forEach(c=>{ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; });
-    newTokCol.appendChild(el('div','caption','<b>Only 1 vector (1x4096) enters 94 layers:</b>'));
-    newTokCol.appendChild(newVec);
-    boxB.appendChild(newTokCol);
+    stackRow.appendChild(el('div','eq','×'));
 
-    compRow.appendChild(boxB);
-    wrap.appendChild(compRow);
+    const wBox = el('div','col'); wBox.style.alignItems='center';
+    wBox.appendChild(el('div','caption','Weight W (8x8):'));
+    const wM = mtx(W, {small:true});
+    wBox.appendChild(wM);
+    stackRow.appendChild(wBox);
+
+    wrap.appendChild(stackRow);
+
+    // Counters & Pain Banner
+    const banner = el('div','tag','🔴 QUADRATIC EXPLOSION: Every new word forces all previous words to be re-multiplied through all layers');
+    banner.style.cssText += ';font-size:11px;padding:6px 14px;border-color:var(--accent);color:var(--accent);background:var(--warnWash);';
+    wrap.appendChild(banner);
+
+    const painTracker = el('div','counter','Step Math: <b>24</b> MACs · Cumulative Wasted Math: <b>24</b> MACs');
+    wrap.appendChild(painTracker);
 
     const check = el('div','caption','');
     check.style.marginTop='4px';
     wrap.appendChild(check);
 
-    const foot = el('div','bigNote','With KV cache, compute cost per word drops from <b>100 matmuls to CONSTANT 1 matmul</b>! 99% of GPU compute is saved.');
-    wrap.appendChild(foot);
     body.appendChild(wrap);
+
+    const stepsData = [
+      {toks:['The','cat','sat'], newTok:'on', rows:3, stepMac:24, totalMac:24},
+      {toks:['The','cat','sat','on'], newTok:'the', rows:4, stepMac:32, totalMac:56},
+      {toks:['The','cat','sat','on','the'], newTok:'mat', rows:5, stepMac:40, totalMac:96},
+      {toks:['The','cat','sat','on','the','mat'], newTok:'.', rows:6, stepMac:48, totalMac:144}
+    ];
 
     createStepper({
       container: body,
       id,
       phases: [
         {
-          name: '1. The Disaster',
-          delay: 1400,
+          name: 'Step 1: Emit "on"',
+          delay: 1500,
           run: async () => {
-            status.textContent = '1. The Disaster: Amnesia forces GPU to re-compute all previous words on every new word';
+            const d = stepsData[0];
+            status.textContent = `Step 1: Re-feeds ${d.rows} tokens ("The","cat","sat") through all 94 layers -> 24 MACs`;
             status.classList.remove('active');
-            boxA.style.borderColor='var(--accent)';
-            boxB.style.opacity='0.4';
-            boxB.style.borderColor='var(--line2)';
-            mtxA.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-            painCount.innerHTML = 'Total token matmuls: <b>5,050</b> for 100 words (O(N²) quadratic explosion)';
+            stream.innerHTML = '';
+            d.toks.forEach(t=>stream.appendChild(el('div','tokenPill prompt', t)));
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs`;
             check.innerHTML = '';
           }
         },
         {
-          name: '2. The Notebook',
+          name: 'Step 2: Emit "the"',
           delay: 1500,
           run: async () => {
-            status.textContent = '2. The Solution: Store Keys and Values of past words in memory as notes (KV Cache)';
+            const d = stepsData[1];
+            status.textContent = `Step 2: Re-feeds ${d.rows} tokens ("The","cat","sat","on") through all 94 layers -> 32 MACs`;
             status.classList.add('active');
-            boxA.style.borderColor='var(--line2)';
-            boxB.style.opacity='1';
-            boxB.style.borderColor='var(--accent)';
-            nbMtx.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
+            stream.innerHTML = '';
+            d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs`;
           }
         },
         {
-          name: '3. Constant 1 Token',
+          name: 'Step 3: Emit "mat"',
           delay: 1500,
           run: async () => {
-            status.textContent = '3. The Cure: Only 1 new vector (1x4096) enters layers, reading the notebook in RAM';
-            newVec.querySelectorAll('.cell').forEach(c=>c.classList.add('flash'));
-            check.innerHTML = `Compute cost drops from 100 matmuls to constant 1 matmul per word! Zero past words re-computed <span class="okmark">✓</span>`;
+            const d = stepsData[2];
+            status.textContent = `Step 3: Re-feeds ${d.rows} tokens through all 94 layers -> 40 MACs (matrix grows taller!)`;
+            stream.innerHTML = '';
+            d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs`;
+          }
+        },
+        {
+          name: 'Step 4: Emit "."',
+          delay: 1500,
+          run: async () => {
+            const d = stepsData[3];
+            status.textContent = `Step 4: Re-feeds ${d.rows} tokens -> 48 MACs. Cumulative wasted math explodes to 144 MACs!`;
+            stream.innerHTML = '';
+            d.toks.forEach((t,i)=>stream.appendChild(el('div','tokenPill '+(i<3?'prompt':'new'), t)));
+            inHolder.innerHTML = '';
+            inHolder.appendChild(mtx(Array.from({length:d.rows},()=>Array(8).fill('')), {small:true}));
+            inHolder.querySelectorAll('.cell').forEach(paintInk);
+            painTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Wasted Math: <b>${d.totalMac}</b> MACs (O(N²) Disaster)`;
+            check.innerHTML = `Notice the explosion: 144 MACs wasted just to generate 4 words! On 1,000 words, this takes minutes <span class="okmark">⚠️</span>`;
             status.classList.remove('active');
           }
         }
@@ -2219,7 +2239,137 @@ P3.push({
   }
 });
 
-/* ---- 3.2 Slicing KV Cache on 4 GPUs ---- */
+/* ---- 3.2 The Solution: The Detective's Pocket Notebook (KV Cache) ---- */
+P3.push({
+  title:'The Solution: The Detective\'s Pocket Notebook (The KV Cache)',
+  text:`<h2>Why re-read the past when you can take notes?</h2>
+    <p>The detective realizes: <i>"Past words never change! Their Key and Value vectors will always be identical."</i></p>
+    <p>During Prefill, when prompt tokens pass through W_K and W_V, the detective writes summary notes into a <b>Pocket Notebook (the KV Cache in RAM)</b>:</p>
+    <p>• <b>Key (K):</b> What is each word about? (Topic tag)<br>
+       • <b>Value (V):</b> What information does each word hold? (Clue content)</p>
+    <p><b>Now watch the generation loop run with the KV Cache:</b></p>
+    <p>• <b>Step 1 (Emit "on"):</b> Only 1 vector ("sat", 1x8) -> <b>8 MACs</b> (reads 3 cached notes)<br>
+       • <b>Step 2 (Emit "the"):</b> Only 1 vector ("on", 1x8) -> <b>8 MACs</b> (reads 4 cached notes)<br>
+       • <b>Step 3 (Emit "mat"):</b> Only 1 vector ("the", 1x8) -> <b>8 MACs</b> (reads 5 cached notes)<br>
+       • <b>Step 4 (Emit "."):</b> Only 1 vector ("mat", 1x8) -> <b>8 MACs</b> (reads 6 cached notes)</p>
+    <div class="key"><b>Total compute needed:</b> 8 + 8 + 8 + 8 = <b>32 MACs</b> (a <b>4.5x compute reduction</b> on just 4 words, and over <b>1,000x</b> on long text)! Compute cost stays flat at a <b>constant 1 token per step</b>.</div>`,
+  setup(body, id){
+    const wrap = el('div','col'); wrap.style.gap='16px'; wrap.style.width='100%'; wrap.style.maxWidth='880px';
+    const status = el('div','statusBadge','1. KV Cache Ready: Past 3 tokens cached in RAM. Only 1 vector enters layer!');
+    wrap.appendChild(status);
+
+    const compRow = el('div','row'); compRow.style.gap='16px'; compRow.style.width='100%';
+
+    // Notebook (KV Cache in RAM)
+    const nbBox = el('div','col'); nbBox.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    nbBox.appendChild(el('div','caption','<b>Pocket Notebook (KV Cache in RAM)</b>'));
+    const nbTable = el('div','kvTable');
+    const nbHolder = el('div');
+    nbTable.appendChild(nbHolder);
+    nbBox.appendChild(nbTable);
+    const nbCap = el('div','caption','<b>3</b> tokens cached in RAM');
+    nbBox.appendChild(nbCap);
+    compRow.appendChild(nbBox);
+
+    // 1-Token Input entering layer
+    const layerBox = el('div','col'); layerBox.style.cssText='flex:1;border:1px solid var(--line2);border-radius:2px;padding:12px;background:var(--panel);gap:8px;';
+    layerBox.appendChild(el('div','caption','<b>94 Layers Compute: ONLY 1 Vector (1x8)</b>'));
+    const inHolder = el('div'); inHolder.style.margin='auto 0';
+    layerBox.appendChild(inHolder);
+    const costTag = el('div','tag','Constant Math: Exactly 8 MACs per step');
+    costTag.style.cssText += ';font-size:11px;padding:4px 10px;border-color:var(--ok);color:var(--ok);background:var(--okWash);';
+    layerBox.appendChild(costTag);
+    compRow.appendChild(layerBox);
+
+    wrap.appendChild(compRow);
+
+    const savingsTracker = el('div','counter','Step Math: <b>8</b> MACs · Cumulative Math: <b>8</b> MACs (vs 24 without cache)');
+    wrap.appendChild(savingsTracker);
+
+    const check = el('div','caption','');
+    check.style.marginTop='4px';
+    wrap.appendChild(check);
+
+    body.appendChild(wrap);
+
+    const stepsData = [
+      {inputWord:'sat', emitWord:'on', cachedCount:3, stepMac:8, cumMac:8, cumNoCache:24},
+      {inputWord:'on', emitWord:'the', cachedCount:4, stepMac:8, cumMac:16, cumNoCache:56},
+      {inputWord:'the', emitWord:'mat', cachedCount:5, stepMac:8, cumMac:24, cumNoCache:96},
+      {inputWord:'mat', emitWord:'.', cachedCount:6, stepMac:8, cumMac:32, cumNoCache:144}
+    ];
+
+    createStepper({
+      container: body,
+      id,
+      phases: [
+        {
+          name: 'Step 1: Emit "on"',
+          delay: 1500,
+          run: async () => {
+            const d = stepsData[0];
+            status.textContent = `Step 1: Input "sat" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 MACs -> Emits "on"`;
+            status.classList.remove('active');
+            nbHolder.innerHTML = '';
+            nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
+            nbHolder.querySelectorAll('.cell').forEach(paintInk);
+            nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
+            inHolder.innerHTML = '';
+            const vm = mtx([[ '1','2','0','1','2','1','1','0' ]], {small:true});
+            vm.querySelectorAll('.cell').forEach(c=>{ c.style.borderColor='var(--accent)'; c.style.color='var(--accent)'; });
+            inHolder.appendChild(vm);
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+            check.innerHTML = '';
+          }
+        },
+        {
+          name: 'Step 2: Emit "the"',
+          delay: 1500,
+          run: async () => {
+            const d = stepsData[1];
+            status.textContent = `Step 2: Input "on" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 MACs -> Emits "the"`;
+            status.classList.add('active');
+            nbHolder.innerHTML = '';
+            nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
+            nbHolder.querySelectorAll('.cell').forEach(paintInk);
+            nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+          }
+        },
+        {
+          name: 'Step 3: Emit "mat"',
+          delay: 1500,
+          run: async () => {
+            const d = stepsData[2];
+            status.textContent = `Step 3: Input "the" (1x8) -> Query reads ${d.cachedCount} notes in RAM -> 8 MACs -> Emits "mat"`;
+            nbHolder.innerHTML = '';
+            nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
+            nbHolder.querySelectorAll('.cell').forEach(paintInk);
+            nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+          }
+        },
+        {
+          name: 'Step 4: Emit "."',
+          delay: 1500,
+          run: async () => {
+            const d = stepsData[3];
+            status.textContent = `Step 4: Input "mat" (1x8) -> 8 MACs -> Emits "."! Compute cost stayed flat at 8 MACs per step`;
+            nbHolder.innerHTML = '';
+            nbHolder.appendChild(mtx(Array.from({length:d.cachedCount},()=>Array(8).fill('')), {small:true}));
+            nbHolder.querySelectorAll('.cell').forEach(paintInk);
+            nbCap.innerHTML = `<b>${d.cachedCount}</b> tokens cached in RAM`;
+            savingsTracker.innerHTML = `Step Math: <b>${d.stepMac}</b> MACs · Cumulative Math: <b>${d.cumMac}</b> MACs (vs ${d.cumNoCache} MACs without cache)`;
+            check.innerHTML = `Compute cost was slashed from 144 MACs down to 32 MACs (4.5x faster)! Zero past tokens re-computed <span class="okmark">✓</span>`;
+            status.classList.remove('active');
+          }
+        }
+      ]
+    });
+  }
+});
+
+/* ---- 3.3 Slicing KV Cache on 4 GPUs ---- */
 P3.push({
   title:'Slicing the KV Cache: How 4 GPUs divide the notebook',
   text:`<h2>Partitioning the notebook across 4 GPUs</h2>
@@ -2330,7 +2480,7 @@ P3.push({
   }
 });
 
-/* ---- 3.3 One Decode Step ---- */
+/* ---- 3.4 One Decode Step ---- */
 P3.push({
   title:'One Decode Step: Generating 1 Token on 4 GPUs',
   text:`<h2>The 7-step hardware cycle for one new word</h2>
@@ -2466,7 +2616,7 @@ P3.push({
   }
 });
 
-/* ---- 3.4 Autoregressive Generation Loop ---- */
+/* ---- 3.5 Autoregressive Generation Loop ---- */
 P3.push({
   title:'The Autoregressive Loop: Streaming tokens one-by-one',
   text:`<h2>Watching the sequence grow in real time</h2>
@@ -2605,7 +2755,7 @@ P3.push({
   }
 });
 
-/* ---- 3.5 Memory Wall Race ---- */
+/* ---- 3.6 Memory Wall Race ---- */
 P3.push({
   title:'The Memory Wall: Why Decode is Bandwidth-Bound (1 GPU vs 4 GPUs)',
   text:`<h2>Why generating words is all about memory bandwidth</h2>
